@@ -28,6 +28,14 @@ cat > "$APP/Contents/Info.plist" <<'EOF'
 </plist>
 EOF
 
-# Ad-hoc signature so macOS can remember the Accessibility permission.
-codesign --force --sign - "$APP"
+# Sign with the local certificate from make-signing-cert.sh so the Accessibility permission
+# survives rebuilds. Without it, fall back to an ad-hoc signature (permission resets each build).
+IDENTITY=$(security find-identity -p codesigning 2>/dev/null \
+    | awk '/"Jog Scroll Local Signing"/ { print $2; exit }')
+if [ -n "$IDENTITY" ]; then
+    codesign --force --sign "$IDENTITY" "$APP"
+else
+    echo "Note: no \"Jog Scroll Local Signing\" certificate; signing ad-hoc. Run ./make-signing-cert.sh to fix."
+    codesign --force --sign - "$APP"
+fi
 echo "Built $(pwd)/$APP"

@@ -13,14 +13,17 @@ How it behaves (same as the Bome rules):
 You'll need Apple's Command Line Tools (`xcode-select --install`). Then run:
 
 ```
+./make-signing-cert.sh   # one time: creates a local signing certificate
 ./install.sh
 ```
+
+`make-signing-cert.sh` adds a self-signed "Jog Scroll Local Signing" certificate to your login keychain. Every build is signed with it, so macOS treats a rebuilt app as the same app and keeps its Accessibility permission. Without the certificate, builds are signed ad-hoc and you'll need to approve the permission again after each rebuild.
 
 This builds `JogScroll.app`, copies it to `~/Applications`, sets it to start at login and launches it.
 
 The first time it runs, macOS asks for **Accessibility** permission, which it needs to control the mouse. Turn on **jog-scroll** under System Settings → Privacy & Security → Accessibility. Jog Scroll then restarts itself.
 
-After a rebuild, macOS may treat it as a new app. If scrolling stops, turn its Accessibility switch off and on again, or remove it from the list and add it back.
+If scrolling stops after a rebuild, check that the signing certificate exists. Then turn Jog Scroll's Accessibility switch off and on again, or remove it from the list and add it back.
 
 ## Menu bar icon
 
