@@ -6,6 +6,7 @@ How it behaves (same as the Bome rules):
 - Turning the jog scrolls by the number of ticks the controller reports. Values below 50 count as clockwise, and values near 128 count as counter-clockwise.
 - Unlike Bome, which scrolls whole lines, Jog Scroll scrolls smoothly by a set number of pixels per tick (4 by default). At low settings, partial pixels are carried over so slow turns still move.
 - While you touch the top of the jog, and for 1 second after you let go, scrolling is 10× faster.
+- While you hold Shift on your keyboard, the jog scrolls sideways instead. Turning it the way that normally scrolls up scrolls left.
 - One change from Bome: touching the jog again inside that 1-second window keeps it fast. (In Bome, the old timer would still switch fast mode off.)
 
 ## Install

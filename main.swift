@@ -206,11 +206,27 @@ func isTouchDown(_ m: MidiMessage) -> Bool {
     }
 }
 
-func scroll(pixels: Int) {
+func scroll(pixels: Int, horizontal: Bool = false) {
     guard pixels != 0 else { return }
     let clamped = Int32(max(-10_000, min(10_000, pixels)))
-    CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1,
-            wheel1: clamped, wheel2: 0, wheel3: 0)?.post(tap: .cghidEventTap)
+    // Positive vertical = up and positive horizontal = left, matching Shift + mouse wheel.
+    guard let event = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2,
+                              wheel1: horizontal ? 0 : clamped, wheel2: horizontal ? clamped : 0, wheel3: 0)
+    else { return }
+    // Carry the real modifier keys. A posted event with different flags would make macOS (and us)
+    // think Shift had been released partway through a Shift-scroll.
+    var flags = CGEventSource.flagsState(.combinedSessionState)
+    if keyboardShiftHeld { flags.insert(.maskShift) } else { flags.remove(.maskShift) }
+    event.flags = flags
+    event.post(tap: .cghidEventTap)
+}
+
+/// Whether either physical Shift key is down. Key state, unlike modifier flags,
+/// isn't changed by the scroll events we post.
+var keyboardShiftHeld: Bool {
+    let leftShift: CGKeyCode = 56, rightShift: CGKeyCode = 60
+    return CGEventSource.keyState(.hidSystemState, key: leftShift)
+        || CGEventSource.keyState(.hidSystemState, key: rightShift)
 }
 
 /// The Bome translators, plus the "learn" flow. Everything runs on the main queue.
@@ -226,6 +242,7 @@ final class JogEngine {
 
     private var releaseTimer: DispatchWorkItem?
     private var remainder = 0.0     // sub-pixel scroll carried over to the next tick
+    private var remainderHorizontal = false
     private var candidate: MidiMatch?
     private var candidateCount = 0
 
@@ -269,12 +286,15 @@ final class JogEngine {
         if fast { distance *= cfg.touchMultiplier }
         if cfg.invert { distance = -distance }
 
+        let horizontal = keyboardShiftHeld
+
         // Carry fractions forward so low sensitivities still move, but drop them on a direction change.
-        if (remainder < 0) != (distance < 0) { remainder = 0 }
+        if (remainder < 0) != (distance < 0) || horizontal != remainderHorizontal { remainder = 0 }
+        remainderHorizontal = horizontal
         remainder += distance
         let whole = Int(remainder.rounded(.towardZero))
         remainder -= Double(whole)
-        scroll(pixels: whole)
+        scroll(pixels: whole, horizontal: horizontal)
     }
 
     private func learn(_ m: MidiMessage) {
