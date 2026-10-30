@@ -4,6 +4,7 @@ Jog Scroll is a menu bar app that turns a DJ controller's jog wheel into mouse-w
 
 How it behaves (same as the Bome rules):
 - Turning the jog scrolls by the number of ticks the controller reports. Values below 50 count as clockwise, and values near 128 count as counter-clockwise.
+- Unlike Bome, which scrolls whole lines, Jog Scroll scrolls smoothly by a set number of pixels per tick (4 by default). At low settings, partial pixels are carried over so slow turns still move.
 - While you touch the top of the jog, and for 1 second after you let go, scrolling is 10× faster.
 - One change from Bome: touching the jog again inside that 1-second window keeps it fast. (In Bome, the old timer would still switch fast mode off.)
 
@@ -28,6 +29,7 @@ After a rebuild, macOS may treat it as a new app. If scrolling stops, turn its A
 - The menu has these items:
   - **Scrolling On**: pause or resume scrolling
   - **Invert Direction**: flip which way it scrolls
+  - **Sensitivity**: how many pixels each jog tick scrolls
   - **Learn Jog Wheel…**: teach it a jog wheel (follow the prompts next to the icon)
   - **Open Settings File**
   - **Start at Login**
@@ -41,7 +43,7 @@ Settings are in `~/Library/Application Support/jog-scroll/config.json`, and chan
 |---|---|---|
 | `touchMultiplier` | 10 | speed-up while the jog top is touched |
 | `touchHoldSeconds` | 1.0 | how long the speed-up lasts after letting go |
-| `scale` | 1 | multiplier on all scrolling |
+| `pixelsPerTick` | 4 | scroll distance per jog tick; decimals like `2.5` work |
 | `invert` | false | flip the scroll direction |
 | `portName` | Reloop Ready | MIDI input to listen to (part of its name is enough) |
 

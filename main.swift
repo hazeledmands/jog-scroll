@@ -40,10 +40,26 @@ struct Config: Codable, Equatable {
     var touch: MidiMatch? = nil
     var jog: MidiMatch? = nil
     var touchHoldSeconds: Double = 1.0      // how long "fast" lasts after releasing the jog top
-    var touchMultiplier: Int = 10           // Bome: if gt>0 then oo=10*oo
-    var scale: Int = 1                      // overall multiplier on every tick
+    var touchMultiplier: Double = 10        // Bome: if gt>0 then oo=10*oo
+    var pixelsPerTick: Double = 4           // scroll distance per jog tick; fractions accumulate
     var invert: Bool = false                // flip scroll direction
     var centerThreshold: Int = 50           // Bome: values below this are clockwise
+
+    init() {}
+
+    // Missing keys fall back to defaults, so adding a setting never discards a learned jog wheel.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = Config()
+        portName = try c.decodeIfPresent(String.self, forKey: .portName) ?? d.portName
+        touch = try c.decodeIfPresent(MidiMatch.self, forKey: .touch)
+        jog = try c.decodeIfPresent(MidiMatch.self, forKey: .jog)
+        touchHoldSeconds = try c.decodeIfPresent(Double.self, forKey: .touchHoldSeconds) ?? d.touchHoldSeconds
+        touchMultiplier = try c.decodeIfPresent(Double.self, forKey: .touchMultiplier) ?? d.touchMultiplier
+        pixelsPerTick = try c.decodeIfPresent(Double.self, forKey: .pixelsPerTick) ?? d.pixelsPerTick
+        invert = try c.decodeIfPresent(Bool.self, forKey: .invert) ?? d.invert
+        centerThreshold = try c.decodeIfPresent(Int.self, forKey: .centerThreshold) ?? d.centerThreshold
+    }
 }
 
 let configURL: URL = {
@@ -187,10 +203,10 @@ func isTouchDown(_ m: MidiMessage) -> Bool {
     }
 }
 
-func scroll(lines: Int) {
-    guard lines != 0 else { return }
-    let clamped = Int32(max(-1000, min(1000, lines)))
-    CGEvent(scrollWheelEvent2Source: nil, units: .line, wheelCount: 1,
+func scroll(pixels: Int) {
+    guard pixels != 0 else { return }
+    let clamped = Int32(max(-10_000, min(10_000, pixels)))
+    CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1,
             wheel1: clamped, wheel2: 0, wheel3: 0)?.post(tap: .cghidEventTap)
 }
 
@@ -206,6 +222,7 @@ final class JogEngine {
     var onLearned: (() -> Void)?
 
     private var releaseTimer: DispatchWorkItem?
+    private var remainder = 0.0     // sub-pixel scroll carried over to the next tick
     private var candidate: MidiMatch?
     private var candidateCount = 0
 
@@ -244,11 +261,17 @@ final class JogEngine {
 
         // Relative jog: small values = clockwise, values near 128 = counter-clockwise.
         let v = Int(m.data2)
-        var ticks = v < cfg.centerThreshold ? v : -(128 - v)
-        if fast { ticks *= cfg.touchMultiplier }
-        ticks *= cfg.scale
-        if cfg.invert { ticks = -ticks }
-        scroll(lines: ticks)
+        let ticks = v < cfg.centerThreshold ? v : -(128 - v)
+        var distance = Double(ticks) * cfg.pixelsPerTick
+        if fast { distance *= cfg.touchMultiplier }
+        if cfg.invert { distance = -distance }
+
+        // Carry fractions forward so low sensitivities still move, but drop them on a direction change.
+        if (remainder < 0) != (distance < 0) { remainder = 0 }
+        remainder += distance
+        let whole = Int(remainder.rounded(.towardZero))
+        remainder -= Double(whole)
+        scroll(pixels: whole)
     }
 
     private func learn(_ m: MidiMessage) {
@@ -395,6 +418,7 @@ final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let inv = item("Invert Direction", #selector(toggleInvert))
         inv.state = engine.cfg.invert ? .on : .off
         menu.addItem(inv)
+        menu.addItem(sensitivityMenuItem())
         menu.addItem(.separator())
 
         if engine.learnStep == .none {
@@ -408,6 +432,35 @@ final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(login)
         menu.addItem(.separator())
         menu.addItem(item("Quit Jog Scroll", #selector(quit), key: "q"))
+    }
+
+    private static let sensitivityPresets: [Double] = [1, 2, 3, 4, 6, 8, 12, 16, 24]
+
+    private func sensitivityMenuItem() -> NSMenuItem {
+        let current = engine.cfg.pixelsPerTick
+        let sub = NSMenu()
+        var presets = Self.sensitivityPresets
+        if !presets.contains(current) { presets = (presets + [current]).sorted() }   // hand-edited value
+        for value in presets {
+            let i = item("\(formatted(value)) px per tick", #selector(setSensitivity(_:)))
+            i.representedObject = value
+            i.state = value == current ? .on : .off
+            sub.addItem(i)
+        }
+        let parent = NSMenuItem(title: "Sensitivity: \(formatted(current))", action: nil, keyEquivalent: "")
+        parent.submenu = sub
+        return parent
+    }
+
+    private func formatted(_ v: Double) -> String {
+        v == v.rounded() ? String(Int(v)) : String(format: "%g", v)
+    }
+
+    @objc private func setSensitivity(_ sender: NSMenuItem) {
+        guard let value = sender.representedObject as? Double else { return }
+        engine.cfg.pixelsPerTick = value
+        saveConfig(engine.cfg)
+        configDate = configModified()
     }
 
     private func item(_ title: String, _ action: Selector, key: String = "") -> NSMenuItem {
