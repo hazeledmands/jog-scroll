@@ -33,7 +33,7 @@ If scrolling stops after a rebuild, check that the signing certificate exists. T
   - **Scrolling On**: pause or resume scrolling
   - **Invert Direction**: flip which way it scrolls
   - **Sensitivity**: how many pixels each jog tick scrolls
-  - **Connection Alerts**: show a pop-up in the middle of the screen when the controller is plugged in or unplugged. Jog Scroll draws the pop-up itself rather than using macOS notifications, so it still appears with a Focus mode on or the screen mirrored. VoiceOver reads it out too.
+  - **Connection Alerts**: show a notification when the controller is plugged in or unplugged. To turn the sound off but keep the alerts, go to System Settings → Notifications → Jog Scroll. macOS hides notifications while your screen is mirrored or shared, unless **Allow notifications when mirroring or sharing the display** is on in that same settings pane.
   - **Learn Jog Wheel…**: teach it a jog wheel (follow the prompts next to the icon)
   - **Open Settings File**
   - **Start at Login**
@@ -58,8 +58,6 @@ Run these as `~/Applications/JogScroll.app/Contents/MacOS/jog-scroll <command>`:
 
 - `run`: scroll without the menu bar icon, logging to the terminal
 - `learn`: teach it the jog wheel
-- `monitor`: print every incoming MIDI message, for troubleshooting
-- `preview-popup`: show the disconnected and connected pop-ups once
-- `login on` / `login off`: start, or stop starting, at login
+- `monitor`: print every incoming MIDI message, for troubleshooting- `login on` / `login off`: start, or stop starting, at login
 
 The login item is `~/Library/LaunchAgents/local.jog-scroll.plist`.

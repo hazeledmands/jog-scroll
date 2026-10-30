@@ -8,7 +8,7 @@ rm -rf "$APP" jog-scroll
 mkdir -p "$APP/Contents/MacOS"
 
 swiftc -O -o "$APP/Contents/MacOS/jog-scroll" main.swift \
-    -framework AppKit -framework CoreMIDI -framework ApplicationServices
+    -framework AppKit -framework CoreMIDI -framework ApplicationServices -framework UserNotifications
 
 cat > "$APP/Contents/Info.plist" <<'EOF'
 <?xml version="1.0" encoding="UTF-8"?>

@@ -17,6 +17,7 @@ import AppKit
 import CoreMIDI
 import CoreGraphics
 import ApplicationServices
+import UserNotifications
 
 // MARK: - Config
 
@@ -329,83 +330,7 @@ func setStartsAtLogin(_ on: Bool) {
 
 // MARK: - Menu bar app
 
-/// A volume-style overlay in the middle of the screen. It's our own window rather than a macOS
-/// notification, so Focus modes and screen mirroring don't hide it.
-final class Popup {
-    private var panel: NSPanel?
-    private var hideWork: DispatchWorkItem?
-
-    func show(symbol: String, title: String, subtitle: String) {
-        hideWork?.cancel()
-        panel?.orderOut(nil)
-
-        let size = NSSize(width: 260, height: 190)
-        let screen = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? NSScreen.main
-        guard let area = screen?.visibleFrame else { return }
-        let origin = NSPoint(x: area.midX - size.width / 2, y: area.minY + area.height * 0.3)
-
-        let panel = NSPanel(contentRect: NSRect(origin: origin, size: size),
-                            styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        panel.level = .statusBar
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.ignoresMouseEvents = true
-        panel.hasShadow = true
-
-        let background = NSVisualEffectView(frame: NSRect(origin: .zero, size: size))
-        background.material = .hudWindow
-        background.state = .active
-        background.wantsLayer = true
-        background.layer?.cornerRadius = 22
-        background.layer?.masksToBounds = true
-
-        let icon = NSImageView(image: NSImage(systemSymbolName: symbol, accessibilityDescription: nil) ?? NSImage())
-        icon.symbolConfiguration = .init(pointSize: 56, weight: .regular)
-        icon.contentTintColor = .labelColor
-        let titleLabel = NSTextField(labelWithString: title)
-        titleLabel.font = .systemFont(ofSize: 17, weight: .semibold)
-        titleLabel.alignment = .center
-        let subtitleLabel = NSTextField(labelWithString: subtitle)
-        subtitleLabel.font = .systemFont(ofSize: 13)
-        subtitleLabel.textColor = .secondaryLabelColor
-        subtitleLabel.alignment = .center
-        subtitleLabel.maximumNumberOfLines = 2
-        subtitleLabel.preferredMaxLayoutWidth = size.width - 32
-
-        let stack = NSStackView(views: [icon, titleLabel, subtitleLabel])
-        stack.orientation = .vertical
-        stack.spacing = 8
-        stack.setCustomSpacing(14, after: icon)
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        background.addSubview(stack)
-        NSLayoutConstraint.activate([
-            stack.centerXAnchor.constraint(equalTo: background.centerXAnchor),
-            stack.centerYAnchor.constraint(equalTo: background.centerYAnchor),
-            stack.widthAnchor.constraint(lessThanOrEqualTo: background.widthAnchor, constant: -32),
-        ])
-        panel.contentView = background
-
-        panel.alphaValue = 0
-        panel.orderFrontRegardless()
-        NSAnimationContext.runAnimationGroup { $0.duration = 0.15; panel.animator().alphaValue = 1 }
-        self.panel = panel
-
-        // Also tell VoiceOver, for anyone not looking at the screen.
-        NSAccessibility.post(element: NSApp as Any, notification: .announcementRequested,
-                             userInfo: [.announcement: "\(title). \(subtitle)", .priority: NSAccessibilityPriorityLevel.high.rawValue])
-
-        let work = DispatchWorkItem { [weak self, weak panel] in
-            guard let panel else { return }
-            NSAnimationContext.runAnimationGroup({ $0.duration = 0.4; panel.animator().alphaValue = 0 },
-                                                 completionHandler: { panel.orderOut(nil); if self?.panel === panel { self?.panel = nil } })
-        }
-        hideWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5, execute: work)
-    }
-}
-
-final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
+final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUserNotificationCenterDelegate {
     private let engine = JogEngine(cfg: loadConfig())
     private var input: MidiInput!
     private var statusItem: NSStatusItem!
@@ -413,7 +338,6 @@ final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var banner: String?
     private var configDate = configModified()
     private var wasConnected = false
-    private let popup = Popup()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -427,6 +351,12 @@ final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         input.verbose = false
         wasConnected = deviceConnected   // no alert for the state at launch
         input.onSourcesChanged = { [weak self] in self?.sourcesChanged() }
+
+        let center = UNUserNotificationCenter.current()
+        center.delegate = self
+        center.requestAuthorization(options: [.alert, .sound]) { granted, error in
+            NSLog("jog-scroll: notification permission granted=\(granted) error=\(String(describing: error))")
+        }
 
         let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         trusted = AXIsProcessTrustedWithOptions(opts)
@@ -459,16 +389,29 @@ final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // MIDI setup changes come in bursts, so only alert when the controller's state actually flips.
         if connected != wasConnected && engine.learnStep == .none && engine.cfg.connectionAlerts {
             let name = engine.cfg.portName.isEmpty ? "MIDI controller" : engine.cfg.portName
-            showConnectionPopup(connected: connected, name: name)
+            notify(connected ? "\(name) connected" : "\(name) disconnected",
+                   connected ? "Jog scrolling is ready." : "Jog scrolling is paused until it's plugged back in.")
         }
         wasConnected = connected
         refresh()
     }
 
-    func showConnectionPopup(connected: Bool, name: String) {
-        popup.show(symbol: connected ? "cable.connector" : "cable.connector.slash",
-                   title: connected ? "\(name) connected" : "\(name) disconnected",
-                   subtitle: connected ? "Jog scrolling is ready." : "Scrolling paused until it's plugged back in.")
+    private func notify(_ title: String, _ body: String) {
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        content.sound = .default   // turn off per-app in System Settings → Notifications if unwanted
+        // Reusing one identifier replaces the previous alert instead of stacking them up.
+        let request = UNNotificationRequest(identifier: "connection", content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(request) { error in
+            if let error { NSLog("jog-scroll: couldn't show alert: \(error)") }
+        }
+    }
+
+    // Show alerts even though a menu bar app counts as "in the foreground".
+    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
+                                withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([.banner, .sound])
     }
 
     private func refresh() {
@@ -617,24 +560,6 @@ final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 }
 
-/// Shows the disconnected and then the connected pop-up, then exits. Handy for checking how it looks.
-func runPopupPreview() -> Never {
-    let app = NSApplication.shared
-    app.setActivationPolicy(.accessory)
-    let popup = Popup()
-    let name = loadConfig().portName.isEmpty ? "MIDI controller" : loadConfig().portName
-    DispatchQueue.main.async {
-        popup.show(symbol: "cable.connector.slash", title: "\(name) disconnected",
-                   subtitle: "Scrolling paused until it's plugged back in.")
-    }
-    DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) {
-        popup.show(symbol: "cable.connector", title: "\(name) connected", subtitle: "Jog scrolling is ready.")
-    }
-    DispatchQueue.main.asyncAfter(deadline: .now() + 7) { exit(0) }
-    app.run()
-    exit(0)
-}
-
 func runApp() -> Never {
     // Only one copy at a time, or every jog tick would scroll twice.
     if let id = Bundle.main.bundleIdentifier,
@@ -721,7 +646,6 @@ let command = CommandLine.arguments.dropFirst().first { !$0.hasPrefix("-") }
 
 switch command {
 case nil:       runApp()
-case "preview-popup": runPopupPreview()
 case "run":     runScroller()
 case "learn":   runLearn()
 case "monitor": runMonitor()
