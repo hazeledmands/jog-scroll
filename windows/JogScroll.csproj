@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Builds JogScroll.exe, the tray app. build.ps1 builds this project a second time with
+       OutputType=Exe to make jog-scroll.exe, the console program for the terminal commands. -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>JogScroll</AssemblyName>
+    <RootNamespace>JogScroll</RootNamespace>
+    <Product>Jog Scroll</Product>
+    <ApplicationIcon>..\icon\AppIcon.ico</ApplicationIcon>
+    <ApplicationHighDpiMode>SystemAware</ApplicationHighDpiMode>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>false</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <DebugType>embedded</DebugType>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(OutputType)' == 'Exe'">
+    <DefineConstants>$(DefineConstants);CLI</DefineConstants>
+  </PropertyGroup>
+
+</Project>

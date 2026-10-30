@@ -9,6 +9,8 @@ How it behaves (same as the Bome rules):
 - While you hold Shift on your keyboard, the jog scrolls sideways instead. Turning it the way that normally scrolls up scrolls left.
 - One change from Bome: touching the jog again inside that 1-second window keeps it fast. (In Bome, the old timer would still switch fast mode off.)
 
+There's also a Windows version: see [windows/README.md](windows/README.md).
+
 ## Install
 
 You'll need Apple's Command Line Tools (`xcode-select --install`). Then run:
