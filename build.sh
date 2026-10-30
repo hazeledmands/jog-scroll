@@ -5,7 +5,8 @@ cd "$(dirname "$0")"
 
 APP=build/JogScroll.app
 rm -rf "$APP" jog-scroll
-mkdir -p "$APP/Contents/MacOS"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+cp icon/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"   # regenerate with: swift icon/make-icon.swift
 
 swiftc -O -o "$APP/Contents/MacOS/jog-scroll" main.swift \
     -framework AppKit -framework CoreMIDI -framework ApplicationServices -framework UserNotifications
@@ -19,6 +20,7 @@ cat > "$APP/Contents/Info.plist" <<'EOF'
     <key>CFBundleName</key>               <string>Jog Scroll</string>
     <key>CFBundleDisplayName</key>        <string>Jog Scroll</string>
     <key>CFBundleExecutable</key>         <string>jog-scroll</string>
+    <key>CFBundleIconFile</key>           <string>AppIcon</string>
     <key>CFBundlePackageType</key>        <string>APPL</string>
     <key>CFBundleShortVersionString</key> <string>1.0</string>
     <key>CFBundleVersion</key>            <string>1</string>
