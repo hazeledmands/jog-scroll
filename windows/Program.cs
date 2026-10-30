@@ -1,5 +1,5 @@
 // jog-scroll for Windows: turn a DJ controller's jog wheel into mouse-wheel scrolling.
-// A port of ../main.swift; see README.md in this folder.
+// A port of ../macos/main.swift; see README.md in this folder.
 //
 // Builds as two programs:
 //   JogScroll.exe            the tray app (what runs at login)

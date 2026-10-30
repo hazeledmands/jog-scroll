@@ -1,12 +1,12 @@
 #!/bin/sh
-# Builds build/JogScroll.app from main.swift. Needs Apple's Command Line Tools (xcode-select --install).
+# Builds ../build/macos/JogScroll.app from main.swift. Needs Apple's Command Line Tools (xcode-select --install).
 set -e
 cd "$(dirname "$0")"
 
-APP=build/JogScroll.app
-rm -rf "$APP" jog-scroll
+APP=../build/macos/JogScroll.app
+rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp icon/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"   # regenerate with: swift icon/make-icon.swift
+cp ../icon/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"   # regenerate with: swift icon/make-icon.swift
 
 swiftc -O -o "$APP/Contents/MacOS/jog-scroll" main.swift \
     -framework AppKit -framework CoreMIDI -framework ApplicationServices -framework UserNotifications
@@ -37,7 +37,7 @@ IDENTITY=$(security find-identity -p codesigning 2>/dev/null \
 if [ -n "$IDENTITY" ]; then
     codesign --force --sign "$IDENTITY" "$APP"
 else
-    echo "Note: no \"Jog Scroll Local Signing\" certificate; signing ad-hoc. Run ./make-signing-cert.sh to fix."
+    echo "Note: no \"Jog Scroll Local Signing\" certificate; signing ad-hoc. Run macos/make-signing-cert.sh to fix."
     codesign --force --sign - "$APP"
 fi
-echo "Built $(pwd)/$APP"
+echo "Built $(cd "$(dirname "$APP")" && pwd)/JogScroll.app"

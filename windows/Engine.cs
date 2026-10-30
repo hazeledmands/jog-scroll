@@ -28,6 +28,7 @@ static class Scroller
 }
 
 /// The Bome translators, plus the "learn" flow. Everything runs on the UI thread.
+/// A port of JogEngine in macos/main.swift; change both together.
 public sealed class JogEngine
 {
     public enum LearnStep { None, Touch, Spin }

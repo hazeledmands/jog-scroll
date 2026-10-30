@@ -10,7 +10,7 @@ pkill -x jog-scroll 2>/dev/null && sleep 1 || true
 DEST="$HOME/Applications/JogScroll.app"
 mkdir -p "$HOME/Applications"
 rm -rf "$DEST"
-cp -R build/JogScroll.app "$DEST"
+cp -R ../build/macos/JogScroll.app "$DEST"
 
 "$DEST/Contents/MacOS/jog-scroll" login on
 open "$DEST"

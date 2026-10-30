@@ -1,66 +1,45 @@
 # Jog Scroll
 
-Jog Scroll is a menu bar app that turns a DJ controller's jog wheel into mouse-wheel scrolling. It's a standalone replacement for the Bome MIDI Translator "jog scroll" project.
+Jog Scroll is a small app for macOS and Windows that turns a DJ controller's jog wheel into mouse-wheel scrolling. It's a standalone replacement for the Bome MIDI Translator "jog scroll" project.
 
 How it behaves (same as the Bome rules):
 - Turning the jog scrolls by the number of ticks the controller reports. Values below 50 count as clockwise, and values near 128 count as counter-clockwise.
-- Unlike Bome, which scrolls whole lines, Jog Scroll scrolls smoothly by a set number of pixels per tick (4 by default). At low settings, partial pixels are carried over so slow turns still move.
+- Unlike Bome, which scrolls whole lines, Jog Scroll scrolls smoothly by a set amount per tick. At low settings, partial amounts are carried over so slow turns still move.
 - While you touch the top of the jog, and for 1 second after you let go, scrolling is 10× faster.
 - While you hold Shift on your keyboard, the jog scrolls sideways instead. Turning it the way that normally scrolls up scrolls left.
 - One change from Bome: touching the jog again inside that 1-second window keeps it fast. (In Bome, the old timer would still switch fast mode off.)
 
-There's also a Windows version: see [windows/README.md](windows/README.md).
-
 ## Install
 
-You'll need Apple's Command Line Tools (`xcode-select --install`). Then run:
+| | Runs as | Install |
+|---|---|---|
+| macOS | a menu bar app | [macos/README.md](macos/README.md) |
+| Windows | a notification-area (tray) app | [windows/README.md](windows/README.md) |
 
-```
-./make-signing-cert.sh   # one time: creates a local signing certificate
-./install.sh
-```
-
-`make-signing-cert.sh` adds a self-signed "Jog Scroll Local Signing" certificate to your login keychain. Every build is signed with it, so macOS treats a rebuilt app as the same app and keeps its Accessibility permission. Without the certificate, builds are signed ad-hoc and you'll need to approve the permission again after each rebuild.
-
-This builds `JogScroll.app`, copies it to `~/Applications`, sets it to start at login and launches it.
-
-The first time it runs, macOS asks for **Accessibility** permission, which it needs to control the mouse. Turn on **jog-scroll** under System Settings → Privacy & Security → Accessibility. Jog Scroll then restarts itself.
-
-If scrolling stops after a rebuild, check that the signing certificate exists. Then turn Jog Scroll's Accessibility switch off and on again, or remove it from the list and add it back.
-
-## Menu bar icon
-
-- The dial icon is dimmed while the controller is unplugged, scrolling is paused, or Accessibility permission is missing.
-- While fast mode is on, the dial turns filled.
-- The menu has these items:
-  - **Scrolling On**: pause or resume scrolling
-  - **Invert Direction**: flip which way it scrolls
-  - **Sensitivity**: how many pixels each jog tick scrolls
-  - **Connection Alerts**: show a notification when the controller is plugged in or unplugged. To turn the sound off but keep the alerts, go to System Settings → Notifications → Jog Scroll. macOS hides notifications while your screen is mirrored or shared, unless **Allow notifications when mirroring or sharing the display** is on in that same settings pane.
-  - **Learn Jog Wheel…**: teach it a jog wheel (follow the prompts next to the icon)
-  - **Open Settings File**
-  - **Start at Login**
-  - **Quit Jog Scroll**
+On both, the first run asks you to teach it your jog wheel: touch the top of the jog, then spin it by its edge. The icon's menu has the same items on both: Scrolling On, Invert Direction, Sensitivity, Connection Alerts, Learn Jog Wheel…, Open Settings File, Start at Login and Quit.
 
 ## Settings
 
-Settings are in `~/Library/Application Support/jog-scroll/config.json`, and changes take effect within a couple of seconds:
+Settings are in `config.json`, and changes take effect within a couple of seconds. It's in `~/Library/Application Support/jog-scroll/` on macOS and `%APPDATA%\jog-scroll\` on Windows.
 
 | key | default | meaning |
 |---|---|---|
 | `touchMultiplier` | 10 | speed-up while the jog top is touched |
 | `touchHoldSeconds` | 1.0 | how long the speed-up lasts after letting go |
-| `pixelsPerTick` | 4 | scroll distance per jog tick; decimals like `2.5` work |
+| `pixelsPerTick` (macOS) | 4 | scroll distance per jog tick, in pixels; decimals like `2.5` work |
+| `wheelUnitsPerTick` (Windows) | 5 | scroll distance per jog tick, in wheel units (120 = one mouse-wheel notch) |
 | `invert` | false | flip the scroll direction |
 | `connectionAlerts` | true | notify when the controller connects or disconnects |
 | `portName` | Reloop Ready | MIDI input to listen to (part of its name is enough) |
 
 ## Terminal commands
 
-Run these as `~/Applications/JogScroll.app/Contents/MacOS/jog-scroll <command>`:
+Both versions have the same commands: `jog-scroll run` (scroll without the icon, logging to the terminal), `learn`, `monitor` (print every incoming MIDI message, for troubleshooting) and `login on` / `login off`. Each platform's README says where the program is.
 
-- `run`: scroll without the menu bar icon, logging to the terminal
-- `learn`: teach it the jog wheel
-- `monitor`: print every incoming MIDI message, for troubleshooting- `login on` / `login off`: start, or stop starting, at login
+## Repository layout
 
-The login item is `~/Library/LaunchAgents/local.jog-scroll.plist`.
+- `macos/`: the Swift app (`main.swift`) and its build, install and signing scripts
+- `windows/`: the C#/.NET app and its build and install scripts
+- `icon/`: the app icon, shared by both. `make-icon.swift` draws it, and `make-ico.ps1` converts it for Windows.
+
+The two versions share no code, so the scrolling rules above are written twice: `JogEngine` in `macos/main.swift` and in `windows/Engine.cs`. When you change how scrolling behaves, change both and update this README.
