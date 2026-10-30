@@ -1,13 +1,12 @@
 # Jog Scroll
 
-Jog Scroll is a small app for macOS and Windows that turns a DJ controller's jog wheel into mouse-wheel scrolling. It's a standalone replacement for the Bome MIDI Translator "jog scroll" project.
+Jog Scroll is a small app for macOS and Windows that turns a DJ controller's jog wheel into a scroll wheel. Spin the jog to scroll web pages, documents and code smoothly, with fine control when you turn slowly. It works with any MIDI controller that has a jog wheel: you teach it yours the first time it runs.
 
-How it behaves (same as the Bome rules):
-- Turning the jog scrolls by the number of ticks the controller reports. Values below 50 count as clockwise, and values near 128 count as counter-clockwise.
-- Unlike Bome, which scrolls whole lines, Jog Scroll scrolls smoothly by a set amount per tick. At low settings, partial amounts are carried over so slow turns still move.
-- While you touch the top of the jog, and for 1 second after you let go, scrolling is 10× faster.
+How it behaves:
+- Turning the jog scrolls smoothly by a set amount per tick. At low settings, partial amounts are carried over so even slow turns move.
+- While you touch the top of the jog, and for 1 second after you let go, scrolling is 10× faster. Touching it again within that second keeps it fast.
 - While you hold Shift on your keyboard, the jog scrolls sideways instead. Turning it the way that normally scrolls up scrolls left.
-- One change from Bome: touching the jog again inside that 1-second window keeps it fast. (In Bome, the old timer would still switch fast mode off.)
+- It notices the controller being plugged in or unplugged, and can show a notification when that happens.
 
 ## Install
 
