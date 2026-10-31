@@ -10,17 +10,16 @@ sealed class TrayApp : ApplicationContext
 {
     static readonly double[] SensitivityPresets = { 2, 3, 5, 8, 12, 20, 30, 60, 120 };
 
-    readonly JogEngine engine = new(ConfigFile.Load());
     readonly ControlRouter controls;
     readonly MidiInput input;
     readonly NotifyIcon tray;
     readonly ContextMenuStrip menu = new();
     readonly TrayIcons icons = new();
     readonly System.Windows.Forms.Timer poll = new() { Interval = 2000 };
-    DateTime? configDate = ConfigFile.Modified();
-    JogEngine.LearnStep shownStep = JogEngine.LearnStep.None;
-    MidiControl? shownLearning;
-    readonly Dictionary<string, string?> serverErrors = new();   // the last error shown for each server, so it alerts only once
+    DateTime? configDate;
+    string? shownPrompt;
+    bool listeningEverywhere;
+    readonly Dictionary<string, string?> errors = new();   // the last error shown for each server, so it alerts only once
     bool wasConnected;
     bool quiet;   // no connection alerts while we change which devices are open ourselves
 
@@ -36,25 +35,19 @@ sealed class TrayApp : ApplicationContext
                     ?.Invoke(tray, null);
         };
 
-        engine.OnChange = Refresh;
-        engine.OnLearned = () =>
-        {
-            configDate = ConfigFile.Modified();
-            Notify("Learned ✓", $"Jog = {engine.Cfg.Jog!.Description}");
-        };
-        controls = new ControlRouter(engine) { OnChange = Refresh };
+        controls = new ControlRouter(ConfigFile.Load()) { OnChange = Refresh };
+        configDate = ConfigFile.Modified();
         controls.OnLearned = c =>
         {
             configDate = ConfigFile.Modified();
             Notify("Learned ✓", $"{c.Name} = {c.Midi!.Description}");
         };
-        controls.OnResult = (server, error) =>
+        controls.OnResult = (target, error) =>
         {
-            if (error != null && error != serverErrors.GetValueOrDefault(server)) Notify("Controls", error);
-            serverErrors[server] = error;
+            if (error != null && error != errors.GetValueOrDefault(target)) Notify("Controls", error);
+            errors[target] = error;
         };
-        input = new MidiInput(m => { if (engine.Step != JogEngine.LearnStep.None || !controls.Handle(m)) engine.Handle(m); },
-                              WantDevice) { Verbose = false };
+        input = new MidiInput(controls.Handle, WantDevice) { Verbose = false };
         wasConnected = DeviceConnected;   // no alert for the state at launch
         input.OnSourcesChanged = SourcesChanged;
 
@@ -63,26 +56,26 @@ sealed class TrayApp : ApplicationContext
         poll.Start();
 
         tray.Visible = true;
-        if (!engine.IsConfigured) engine.StartLearning();
+        if (!controls.IsConfigured) controls.StartLearning(controls.MainJogToLearn());
         Refresh();
     }
 
-    // Learning listens to every input to find the controller. Otherwise open only the controller,
+    // Learning a jog wheel listens to every input to find the controller. Otherwise open only the controller,
     // because opening a MIDI device on Windows keeps other programs from using it.
-    bool WantDevice(string name) => engine.Step != JogEngine.LearnStep.None || engine.MatchesPort(name);
+    bool WantDevice(string name) => controls.ListensEverywhere || controls.MatchesPort(name);
 
-    bool DeviceConnected => input.SourceNames.Any(engine.MatchesPort);
-    bool DeviceBusy => input.BusyNames.Any(engine.MatchesPort);
+    bool DeviceConnected => input.SourceNames.Any(controls.MatchesPort);
+    bool DeviceBusy => input.BusyNames.Any(controls.MatchesPort);
 
-    string DeviceLabel => engine.Cfg.PortName.Length == 0 ? "MIDI controller" : engine.Cfg.PortName;
+    string DeviceLabel => controls.Cfg.PortName.Length == 0 ? "MIDI controller" : controls.Cfg.PortName;
 
     void PollConfig()
     {
         var date = ConfigFile.Modified();
-        if (date != configDate && engine.Step == JogEngine.LearnStep.None && controls.Learning == null)
+        if (date != configDate && controls.Learning == null)
         {
-            configDate = date;
-            engine.Cfg = ConfigFile.Load();
+            controls.Cfg = ConfigFile.Load();
+            configDate = ConfigFile.Modified();   // after Load, which saves when it updates old settings
             Reconnect();
         }
         Refresh();   // also redraws the icon if the taskbar switched between light and dark
@@ -101,7 +94,7 @@ sealed class TrayApp : ApplicationContext
     {
         bool connected = DeviceConnected;
         // Only alert when the controller's state actually flips.
-        if (!quiet && connected != wasConnected && engine.Step == JogEngine.LearnStep.None && engine.Cfg.ConnectionAlerts)
+        if (!quiet && connected != wasConnected && !controls.ListensEverywhere && controls.Cfg.ConnectionAlerts)
         {
             Notify(connected ? $"{DeviceLabel} connected" : $"{DeviceLabel} disconnected",
                    connected ? "Jog scrolling is ready." : "Jog scrolling is paused until it's plugged back in.");
@@ -115,72 +108,59 @@ sealed class TrayApp : ApplicationContext
 
     void Refresh()
     {
-        if (engine.Step != shownStep)
+        if (controls.LearnPrompt != shownPrompt)
         {
-            shownStep = engine.Step;
-            switch (shownStep)
-            {
-                case JogEngine.LearnStep.Touch: Notify("Learn Jog Wheel", "Touch the top of the jog wheel, then let go."); break;
-                case JogEngine.LearnStep.Spin: Notify("Learn Jog Wheel", "Now spin the jog wheel slowly by its edge."); break;
-            }
+            shownPrompt = controls.LearnPrompt;
+            if (shownPrompt != null) Notify($"Learn {controls.Learning!.Name}", shownPrompt);
+        }
+        if (controls.ListensEverywhere != listeningEverywhere)
+        {
+            listeningEverywhere = controls.ListensEverywhere;
             Reconnect();
         }
-        if (controls.Learning != shownLearning)
-        {
-            shownLearning = controls.Learning;
-            if (shownLearning != null) Notify("Learn Control", $"Move the fader or knob for {shownLearning.Name} all the way down and up. It saves when you stop.");
-        }
 
-        bool dim = !engine.Enabled || !DeviceConnected;
-        tray.Icon = icons.Get(engine.Fast, dim);
+        bool dim = !controls.ScrollingEnabled || !DeviceConnected;
+        tray.Icon = icons.Get(controls.Fast, dim);
         var text = "Jog Scroll: " + Status();
         tray.Text = text.Length > 127 ? text[..127] : text;
     }
 
     string Status()
     {
-        switch (engine.Step)
-        {
-            case JogEngine.LearnStep.Touch: return "Touch the jog top";
-            case JogEngine.LearnStep.Spin: return "Now spin the jog edge";
-        }
-        if (controls.Learning is { } learning) return $"Move the control for {learning.Name}";
-        if (!engine.IsConfigured) return "Jog wheel not learned yet";
-        if (DeviceConnected) return engine.Enabled ? $"Connected: {engine.Cfg.PortName}" : "Paused";
+        if (controls.ShortLearnPrompt is { } prompt) return prompt;
+        if (!controls.IsConfigured) return "Jog wheel not learned yet";
+        if (DeviceConnected) return controls.ScrollingEnabled ? $"Connected: {controls.Cfg.PortName}" : "Paused";
         if (DeviceBusy) return $"{DeviceLabel} is in use by another program";
-        return $"Waiting for {(engine.Cfg.PortName.Length == 0 ? "a MIDI device" : engine.Cfg.PortName)}…";
+        return $"Waiting for {(controls.Cfg.PortName.Length == 0 ? "a MIDI device" : controls.Cfg.PortName)}…";
     }
 
     void BuildMenu()
     {
         menu.Items.Clear();
-        bool isLearning = engine.Step != JogEngine.LearnStep.None || controls.Learning != null;
+        bool isLearning = controls.Learning != null;
         string status = isLearning ? "Learning: " + Status()
-            : DeviceConnected ? $"Connected: {engine.Cfg.PortName}" : Status();
+            : DeviceConnected ? $"Connected: {controls.Cfg.PortName}" : Status();
         menu.Items.Add(new ToolStripMenuItem(status) { Enabled = false });
         menu.Items.Add(new ToolStripSeparator());
 
-        menu.Items.Add(Item("Scrolling On", engine.Enabled, () => engine.Enabled = !engine.Enabled));
-        menu.Items.Add(Item("Invert Direction", engine.Cfg.Invert, () => ChangeConfig(c => c.Invert = !c.Invert)));
-        menu.Items.Add(SensitivityMenu());
-        menu.Items.Add(Item("Connection Alerts", engine.Cfg.ConnectionAlerts,
+        menu.Items.Add(Item("Scrolling On", controls.ScrollingEnabled, () => controls.ScrollingEnabled = !controls.ScrollingEnabled));
+        AddScrollSettings();
+        menu.Items.Add(Item("Connection Alerts", controls.Cfg.ConnectionAlerts,
                             () => ChangeConfig(c => c.ConnectionAlerts = !c.ConnectionAlerts)));
         menu.Items.Add(new ToolStripSeparator());
 
         if (!isLearning)
         {
-            menu.Items.Add(Item("Learn Jog Wheel…", false, engine.StartLearning));
+            menu.Items.Add(Item("Learn Jog Wheel…", false, () => controls.StartLearning(controls.MainJogToLearn())));
             menu.Items.Add(ControlsMenu());
         }
         else
         {
             menu.Items.Add(Item("Cancel Learning", false, () =>
             {
-                engine.CancelLearning();
                 controls.CancelLearning();
-                engine.Cfg = ConfigFile.Load();
+                controls.Cfg = ConfigFile.Load();
                 Reconnect();
-                Refresh();
             }));
         }
         menu.Items.Add(Item("Open Settings File", false, OpenSettings));
@@ -189,15 +169,28 @@ sealed class TrayApp : ApplicationContext
         menu.Items.Add(Item("Quit Jog Scroll", false, Quit));
     }
 
-    ToolStripMenuItem SensitivityMenu()
+    /// Invert Direction and Sensitivity for each jog wheel that scrolls: in the menu itself for one,
+    /// and in a submenu named for each if there are more.
+    void AddScrollSettings()
     {
-        double current = engine.Cfg.WheelUnitsPerTick;
+        var jogs = controls.Cfg.Controls.Where(c => c.IsJog && c.Actions.Any(a => a.IsScroll)).ToList();
+        foreach (var jog in jogs)
+        {
+            var items = jogs.Count == 1 ? menu.Items : ((ToolStripMenuItem)menu.Items.Add(jog.Name)).DropDownItems;
+            items.Add(Item("Invert Direction", jog.Invert, () => ChangeJog(jog, () => jog.Invert = !jog.Invert)));
+            items.Add(SensitivityMenu(jog, jog.Actions.First(a => a.IsScroll)));
+        }
+    }
+
+    ToolStripMenuItem SensitivityMenu(MidiControl jog, ControlAction scroll)
+    {
+        double current = scroll.WheelUnitsPerTick ?? ScrollOutput.DefaultWheelUnitsPerTick;
         var parent = new ToolStripMenuItem($"Sensitivity: {Formatted(current)}");
         var presets = SensitivityPresets.Contains(current) ? SensitivityPresets
             : SensitivityPresets.Append(current).Order().ToArray();   // hand-edited value
         foreach (var value in presets)
             parent.DropDownItems.Add(Item($"{Formatted(value)} per tick", value == current,
-                                          () => ChangeConfig(c => c.WheelUnitsPerTick = value)));
+                                          () => ChangeJog(jog, () => scroll.WheelUnitsPerTick = value)));
         parent.DropDownItems.Add(new ToolStripSeparator());
         parent.DropDownItems.Add(new ToolStripMenuItem("120 = one mouse-wheel notch") { Enabled = false });
         return parent;
@@ -206,12 +199,18 @@ sealed class TrayApp : ApplicationContext
     ToolStripMenuItem ControlsMenu()
     {
         var parent = new ToolStripMenuItem("Controls");
-        foreach (var control in engine.Cfg.Controls)
+        foreach (var control in controls.Cfg.Controls)
         {
             string learned = control.Midi is { } midi ? midi.Description : "not learned yet";
-            parent.DropDownItems.Add(Item($"Learn {control.Name}… ({learned})", false, () => controls.StartLearning(control)));
+            var item = Item($"Learn {control.Name}… ({learned})", false, () => controls.StartLearning(control));
+            if (!controls.CanLearn(control))
+            {
+                item.Text = $"{control.Name}: there's no control type called \"{control.Type}\"";
+                item.Enabled = false;
+            }
+            parent.DropDownItems.Add(item);
         }
-        if (engine.Cfg.Controls.Count == 0)
+        if (controls.Cfg.Controls.Count == 0)
             parent.DropDownItems.Add(new ToolStripMenuItem("None yet: add them in the settings file") { Enabled = false });
         return parent;
     }
@@ -227,14 +226,22 @@ sealed class TrayApp : ApplicationContext
 
     void ChangeConfig(Action<Config> change)
     {
-        change(engine.Cfg);
-        ConfigFile.Save(engine.Cfg);
+        change(controls.Cfg);
+        ConfigFile.Save(controls.Cfg);
         configDate = ConfigFile.Modified();
+        Refresh();
+    }
+
+    /// Changes a jog wheel's settings, unless the settings were reloaded from the file since the menu opened
+    /// and it isn't in them any more.
+    void ChangeJog(MidiControl jog, Action change)
+    {
+        if (controls.Cfg.Controls.Contains(jog)) ChangeConfig(_ => change());
     }
 
     void OpenSettings()
     {
-        if (!File.Exists(ConfigFile.Path)) ConfigFile.Save(engine.Cfg);
+        if (!File.Exists(ConfigFile.Path)) ConfigFile.Save(controls.Cfg);
         Process.Start(new ProcessStartInfo("notepad.exe", $"\"{ConfigFile.Path}\"") { UseShellExecute = true });
     }
 
@@ -245,6 +252,7 @@ sealed class TrayApp : ApplicationContext
         ExitThread();
     }
 }
+
 
 /// Draws the tray icon at runtime: a dial, filled while fast mode is on, faded while inactive,
 /// in white or black to suit the taskbar.

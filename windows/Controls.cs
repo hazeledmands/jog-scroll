@@ -1,134 +1,148 @@
 namespace JogScroll;
 
-/// Turns fader and knob positions into the actions set up for them. Everything runs on the UI thread.
+/// What a type of control does with the MIDI messages it hears.
+interface IControlHandler
+{
+    void Handle(MidiMessage m);
+}
+
+/// Works out which MIDI messages a control sends, while the person moves it.
+abstract class Learner
+{
+    public readonly MidiControl Control;
+    protected readonly Config Cfg;
+    public Action? Changed;   // Prompt changed
+    public Action? Done;      // the control has its MIDI messages now
+
+    protected Learner(MidiControl control, Config cfg) { Control = control; Cfg = cfg; }
+
+    public abstract string Prompt { get; }        // what to do next, for a notification or the terminal
+    public abstract string ShortPrompt { get; }   // the same, short enough for the tray icon's tooltip
+    public virtual bool ListensEverywhere => false;   // whether it needs every MIDI input, to find the controller
+    public abstract void Handle(MidiMessage m);
+    public virtual void Cancel() { }
+}
+
+/// Sends each MIDI message to the controls that use it, and runs learning. Everything runs on the UI thread.
+/// Each type of control is in its own file: Jog.cs and Fader.cs.
 public sealed class ControlRouter
 {
-    readonly JogEngine engine;   // for the config and the controller's port
+    Config cfg;
     readonly Outputs outputs;
-    readonly Dictionary<MidiControl, int> coarse = new();   // latest coarse value of each high-resolution control
-    MidiControl? learning;
-    readonly List<MidiMessage> heard = new();                // while learning: everything the controls sent
-    CancellationTokenSource? stillTimer;
+    readonly Dictionary<MidiControl, IControlHandler?> handlers = new(ReferenceEqualityComparer.Instance);
+    Learner? learner;
+    Action<string, string?>? onResult;
 
     public Action? OnChange;
     public Action<MidiControl>? OnLearned;
 
-    public ControlRouter(JogEngine engine)
+    public ControlRouter(Config cfg)
     {
-        this.engine = engine;
-        outputs = new Outputs(() => engine.Cfg.Servers);
+        this.cfg = cfg;
+        outputs = new Outputs(() => this.cfg.Servers);
     }
 
-    /// Called after each request with the server's name and null, or why it failed.
-    public Action<string, string?>? OnResult { set => outputs.OnResult = value; }
+    /// Called after each action with what it went to (a server's name, say) and null, or why it failed.
+    public Action<string, string?>? OnResult { set { onResult = value; outputs.OnResult = value; } }
 
-    List<MidiControl> Controls => engine.Cfg.Controls;
+    /// The settings. Setting them starts every control afresh.
+    public Config Cfg
+    {
+        get => cfg;
+        set
+        {
+            cfg = value;
+            handlers.Clear();
+            outputs.Reset();
+            OnChange?.Invoke();
+        }
+    }
 
-    public MidiControl? Learning { get => learning; private set { learning = value; OnChange?.Invoke(); } }
+    public bool ScrollingEnabled
+    {
+        get => outputs.Scroll.Enabled;
+        set { outputs.Scroll.Enabled = value; OnChange?.Invoke(); }
+    }
+
+    /// Whether a jog wheel's top is touched, or was a moment ago.
+    public bool Fast => handlers.Values.OfType<Jog>().Any(j => j.Fast);
+
+    public bool IsConfigured => cfg.MainJog?.Midi != null;
+
+    public MidiControl? Learning => learner?.Control;
+    public string? LearnPrompt => learner?.Prompt;
+    public string? ShortLearnPrompt => learner?.ShortPrompt;
+    public bool ListensEverywhere => learner?.ListensEverywhere == true;
+
+    public bool MatchesPort(string name) =>
+        cfg.PortName.Length == 0 || name.Contains(cfg.PortName, StringComparison.OrdinalIgnoreCase);
 
     public MidiControl? Find(string name) =>
-        Controls.FirstOrDefault(c => string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase));
+        cfg.Controls.FirstOrDefault(c => string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase));
+
+    /// The jog wheel for Learn Jog Wheel: the first one, or a new one if there isn't one yet, which is saved once it's learned.
+    public MidiControl MainJogToLearn()
+    {
+        if (cfg.MainJog is { } jog) return jog;
+        jog = MidiControl.NewJog();
+        cfg.Controls.Insert(0, jog);
+        return jog;
+    }
+
+    public bool CanLearn(MidiControl control) => control.IsJog || control.IsFader;
 
     public void StartLearning(MidiControl control)
     {
-        heard.Clear();
-        Learning = control;
+        learner?.Cancel();
+        learner = control.IsJog ? new JogLearner(control, cfg)
+            : control.IsFader ? new FaderLearner(control, cfg)
+            : null;
+        if (learner == null)
+        {
+            onResult?.Invoke(control.Name, $"{control.Name}: there's no control type called \"{control.Type}\"");
+            return;
+        }
+        var started = learner;
+        started.Changed = () => OnChange?.Invoke();
+        started.Done = () =>
+        {
+            if (learner != started) return;
+            learner = null;
+            handlers.Remove(started.Control);
+            ConfigFile.Save(cfg);
+            OnChange?.Invoke();
+            OnLearned?.Invoke(started.Control);
+        };
+        OnChange?.Invoke();
     }
 
     public void CancelLearning()
     {
-        stillTimer?.Cancel();
-        Learning = null;
+        if (learner == null) return;
+        learner.Cancel();
+        learner = null;
+        OnChange?.Invoke();
     }
 
-    /// Returns whether the message was for a control, or taken by learning.
-    public bool Handle(MidiMessage m)
+    public void Handle(MidiMessage m)
     {
-        if (!engine.MatchesPort(m.Source)) return false;
-        if (Learning != null) { Learn(m); return true; }
-
-        bool used = false;
-        foreach (var control in Controls)
+        if (learner != null)
         {
-            if (control.Midi is not { } midi || m.Status != midi.Status) continue;
-            int? raw = null;
-            if ((m.Status & 0xF0) == 0xE0) raw = (m.Data2 << 7) | m.Data1;
-            else if (m.Data1 == midi.Data1 && control.Fine == null) raw = m.Data2;
-            else if (m.Data1 == midi.Data1) { coarse[control] = m.Data2; used = true; }   // wait for the fine value that follows
-            else if (m.Data1 == control.Fine) raw = (coarse.GetValueOrDefault(control) << 7) | m.Data2;
-            if (raw is not int value) continue;
-            used = true;
-
-            int low = control.Low ?? 0, high = control.High ?? ((m.Status & 0xF0) == 0xE0 || control.Fine != null ? 16383 : 127);
-            double position = high > low ? Math.Clamp((double)(value - low) / (high - low), 0, 1) : 0;
-            if (control.Invert) position = 1 - position;
-            foreach (var action in control.Actions) outputs.Send(action, position);
+            if (learner.ListensEverywhere || MatchesPort(m.Source)) learner.Handle(m);
+            return;
         }
-        return used;
+        if (!MatchesPort(m.Source)) return;
+        foreach (var control in cfg.Controls) Handler(control)?.Handle(m);
     }
 
-    static MidiMatch Key(MidiMessage m) => new() { Status = m.Status, Data1 = (m.Status & 0xF0) == 0xE0 ? (byte)0 : m.Data1 };
-
-    /// Collects what the controls send while the person sweeps one, and works it out once they stop for a second.
-    void Learn(MidiMessage m)
+    IControlHandler? Handler(MidiControl control)
     {
-        int type = m.Status & 0xF0;
-        if (type != 0xB0 && type != 0xE0) return;
-        if (Key(m) == engine.Cfg.Jog) return;
-        heard.Add(m);
-        stillTimer?.Cancel();
-        var cts = new CancellationTokenSource();
-        stillTimer = cts;
-        _ = FinishWhenStill(cts.Token);
-    }
-
-    async Task FinishWhenStill(CancellationToken token)
-    {
-        try { await Task.Delay(TimeSpan.FromSeconds(1), token); }
-        catch (TaskCanceledException) { return; }
-        if (Learning is { } target) Finish(target);
-    }
-
-    void Finish(MidiControl target)
-    {
-        // The control that moved most, so a stray knob doesn't count. Keep listening if it barely moved.
-        var groups = heard.GroupBy(Key).OrderByDescending(g => g.Count()).ToList();
-        if (groups.Count == 0 || groups[0].Count() < 5) return;
-        var main = groups[0].Key;
-
-        // A high-resolution fader sends a coarse CC and then a fine CC every time it moves. The coarse
-        // one is the one with fewer different values.
-        MidiMatch midi = main;
-        byte? fine = null;
-        var partner = groups.Skip(1).FirstOrDefault(g =>
-            (main.Status & 0xF0) == 0xB0 && g.Key.Status == main.Status && g.Count() >= groups[0].Count() / 2);
-        if (partner != null)
-        {
-            bool mainIsCoarse = groups[0].Select(h => h.Data2).Distinct().Count() <= partner.Select(h => h.Data2).Distinct().Count();
-            midi = mainIsCoarse ? main : partner.Key;
-            fine = mainIsCoarse ? partner.Key.Data1 : main.Data1;
-        }
-
-        // The range the sweep covered, so each end of the control is each end of the light.
-        var values = new List<int>();
-        int coarseValue = 0;
-        foreach (var h in heard)
-        {
-            var key = Key(h);
-            if (key == midi && (h.Status & 0xF0) == 0xE0) values.Add((h.Data2 << 7) | h.Data1);
-            else if (key == midi && fine == null) values.Add(h.Data2);
-            else if (key == midi) coarseValue = h.Data2;
-            else if (key == midi with { Data1 = fine ?? 0 } && fine != null) values.Add((coarseValue << 7) | h.Data2);
-        }
-        if (values.Count == 0 || values.Max() == values.Min()) return;
-
-        target.Midi = midi;
-        target.Fine = fine;
-        target.Low = values.Min();
-        target.High = values.Max();
-        ConfigFile.Save(engine.Cfg);
-        coarse.Remove(target);
-        Learning = null;
-        OnLearned?.Invoke(target);
+        if (handlers.TryGetValue(control, out var handler)) return handler;
+        handler = control.IsJog ? new Jog(control, outputs, () => OnChange?.Invoke())
+            : control.IsFader ? new Fader(control, outputs)
+            : null;
+        if (handler == null) onResult?.Invoke(control.Name, $"{control.Name}: there's no control type called \"{control.Type}\"");
+        handlers[control] = handler;
+        return handler;
     }
 }

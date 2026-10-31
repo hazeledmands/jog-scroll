@@ -13,21 +13,41 @@ interface IOutput
     void Send(ControlAction action, double value);
 }
 
-/// Sends each action to its server, making an output for each server in the settings as it's first
-/// needed, and again after the settings change. Everything runs on the UI thread.
+/// Carries out actions: scrolling, and requests to servers. It makes an output for each server in the settings
+/// as it's first needed, and again after the settings change. Everything runs on the UI thread.
 public sealed class Outputs
 {
     readonly Func<Dictionary<string, ServerConfig>> servers;
     readonly Dictionary<string, (ServerConfig Config, IOutput Output)> made = new();
+    public readonly ScrollOutput Scroll = new();
 
-    /// Called after each request with the server's name and null, or why it failed.
+    /// Called after each request with the server's name (or "scroll") and null, or why it failed.
     public Action<string, string?>? OnResult;
 
     public Outputs(Func<Dictionary<string, ServerConfig>> servers) { this.servers = servers; }
 
-    public void Send(ControlAction action, double position)
+    /// For a jog wheel: it turned this many ticks, already sped up and inverted as the control says.
+    public void Turn(MidiControl control, ControlAction action, double ticks)
     {
-        string name = action.Server;
+        if (action.IsScroll) Scroll.Turn(action, ticks);
+        else if (action.Type != null) OnResult?.Invoke(action.Type, $"{control.Name}: there's no action type called \"{action.Type}\"");
+        else OnResult?.Invoke(action.Server ?? "", $"{control.Name}: a jog wheel can only scroll so far");
+    }
+
+    /// For a fader or knob: it's at this position, from 0 at the bottom to 1 at the top.
+    public void SetPosition(MidiControl control, ControlAction action, double position)
+    {
+        if (action.IsScroll)
+        {
+            OnResult?.Invoke("scroll", $"{control.Name}: only a jog wheel can scroll");
+            return;
+        }
+        if (action.Type != null)
+        {
+            OnResult?.Invoke(action.Type, $"{control.Name}: there's no action type called \"{action.Type}\"");
+            return;
+        }
+        string name = action.Server ?? "";
         if (!servers().TryGetValue(name, out var config))
         {
             OnResult?.Invoke(name, $"There's no server called \"{name}\" in the settings");
@@ -47,9 +67,66 @@ public sealed class Outputs
             }
             made[name] = entry = (config, output);
         }
-        double low = action.Range.ElementAtOrDefault(0), high = action.Range.Length > 1 ? action.Range[1] : 1;
-        entry.Output.Send(action, Math.Round(low + position * (high - low), Math.Clamp(action.Decimals, 0, 15)));
+        var range = action.Range ?? new double[] { 0, 1 };
+        double low = range.ElementAtOrDefault(0), high = range.Length > 1 ? range[1] : 1;
+        entry.Output.Send(action, Math.Round(low + position * (high - low), Math.Clamp(action.Decimals ?? 0, 0, 15)));
     }
+
+    /// Forgets what belonged to the old settings.
+    public void Reset() => Scroll.Reset();
+}
+
+/// Scrolls the window under the mouse. While Shift is held, apps scroll sideways instead.
+public sealed class ScrollOutput
+{
+    public const double DefaultWheelUnitsPerTick = 5;
+
+    // Sub-unit scroll carried over to the next tick, for each scroll action.
+    readonly Dictionary<ControlAction, (double Remainder, bool Horizontal)> carried = new(ReferenceEqualityComparer.Instance);
+
+    public bool Enabled = true;
+
+    public void Turn(ControlAction action, double ticks)
+    {
+        if (!Enabled) return;
+        double distance = ticks * (action.WheelUnitsPerTick ?? DefaultWheelUnitsPerTick);
+        bool horizontal = Scroller.KeyboardShiftHeld;
+
+        // Carry fractions forward so low sensitivities still move, but drop them on a direction change.
+        var (remainder, wasHorizontal) = carried.GetValueOrDefault(action);
+        if ((remainder < 0) != (distance < 0) || horizontal != wasHorizontal) remainder = 0;
+        remainder += distance;
+        int whole = (int)Math.Truncate(remainder);
+        carried[action] = (remainder - whole, horizontal);
+        Scroller.Scroll(whole);
+    }
+
+    public void Reset() => carried.Clear();
+}
+
+static class Scroller
+{
+    /// Positive scrolls up. Sideways scrolling needs nothing extra: like a real mouse, we send a vertical
+    /// wheel event while Shift is held, and apps turn that into scrolling left (positive) or right.
+    /// A horizontal wheel event doesn't work here, because apps such as Chrome swap its axis when Shift is down.
+    public static void Scroll(int units)
+    {
+        if (units == 0) return;
+        var input = new Native.INPUT
+        {
+            type = Native.INPUT_MOUSE,
+            mi = new Native.MOUSEINPUT
+            {
+                mouseData = unchecked((uint)Math.Clamp(units, -10_000, 10_000)),
+                dwFlags = Native.MOUSEEVENTF_WHEEL,
+            },
+        };
+        Native.SendInput(1, new[] { input }, System.Runtime.InteropServices.Marshal.SizeOf<Native.INPUT>());
+    }
+
+    /// Whether either physical Shift key is down.
+    public static bool KeyboardShiftHeld =>
+        (Native.GetAsyncKeyState(Native.VK_LSHIFT) & 0x8000) != 0 || (Native.GetAsyncKeyState(Native.VK_RSHIFT) & 0x8000) != 0;
 }
 
 /// Sends actions as HTTP requests, one at a time for each method and path. Changes made while a request
@@ -74,7 +151,7 @@ sealed class HttpOutput : IOutput
     public void Send(ControlAction action, double value)
     {
         string text = value.ToString(CultureInfo.InvariantCulture);
-        var key = (action.Method.ToUpperInvariant(), action.Path.Replace("$value", text));
+        var key = ((action.Method ?? "POST").ToUpperInvariant(), (action.Path ?? "").Replace("$value", text));
         var body = Fill(action.Body?.DeepClone(), value, text);
         if (pending.TryGetValue(key, out var waiting) && waiting is JsonObject merged && body is JsonObject fields)
         {

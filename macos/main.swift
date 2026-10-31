@@ -230,7 +230,7 @@ var keyboardShiftHeld: Bool {
 }
 
 /// The Bome translators, plus the "learn" flow. Everything runs on the main queue.
-/// windows/Engine.cs has the same logic for the Windows version; change both together.
+/// windows/Jog.cs and ScrollOutput in windows/Outputs.cs have the same logic for the Windows version; change both together.
 final class JogEngine {
     enum LearnStep { case none, touch, spin }
 

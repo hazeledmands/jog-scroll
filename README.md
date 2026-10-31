@@ -10,7 +10,7 @@ How it behaves:
 
 ## Controls (Windows)
 
-Faders and knobs on the controller can send their position to other programs as HTTP requests: to dim lights through [Hue Tray](https://github.com/hazeledmands/huetray), for example. Each program is a server in `servers`, and each fader or knob is an entry in `controls` that lists the requests it sends:
+On Windows, the jog wheel is one of the **controls** in the settings: things on the controller, and what each one does when it moves. A jog wheel scrolls, and it can be joined by faders and knobs that send their position to other programs as HTTP requests: to dim lights through [Hue Tray](https://github.com/hazeledmands/huetray), for example. Each program is a server in `servers`, and each control is an entry in `controls` with a list of `actions`:
 
 ```json
 "servers": {
@@ -22,6 +22,11 @@ Faders and knobs on the controller can send their position to other programs as 
 },
 "controls": [
   {
+    "name": "Jog",
+    "type": "jog",
+    "actions": [ { "type": "scroll", "wheelUnitsPerTick": 5 } ]
+  },
+  {
     "name": "Desk brightness",
     "actions": [
       { "server": "hue", "method": "PATCH", "path": "lights/Desk Anglepoise", "body": { "brightness": "$value" }, "range": [0, 100] },
@@ -31,7 +36,9 @@ Faders and knobs on the controller can send their position to other programs as 
 ]
 ```
 
-Then teach it which fader or knob to use: **Controls** in the menu, or `jog-scroll learn-control NAME`. Move the control all the way down and up, and it saves once you stop. It records the range the control covered, so each end of the control is each end of `range`.
+Then teach it which jog, fader or knob to use: **Controls** in the menu, or `jog-scroll learn-control NAME`. For a jog wheel, touch its top and then spin it by its edge. For a fader or knob, move it all the way down and up, and it saves once you stop. It records the range the control covered, so each end of the control is each end of `range`.
+
+**Learn Jog Wheel…** and `jog-scroll learn` teach it the first jog wheel in `controls`, and add one if there isn't one. The menu's **Invert Direction** and **Sensitivity** are for the jog wheels that scroll, in a submenu for each if there's more than one. Settings from before the jog wheel was a control (`touch`, `jog`, `wheelUnitsPerTick` and so on) are moved into one the first time it runs.
 
 A server:
 
@@ -48,11 +55,22 @@ A control:
 | key | default | meaning |
 |---|---|---|
 | `name` | | what the menu calls it |
-| `actions` | | the requests it sends whenever it moves |
-| `invert` | false | for a control whose top sends the lowest value, like most tempo faders |
-| `midi`, `fine`, `low`, `high` | | the learned control: its MIDI message, the CC with its fine value (for high-resolution faders, which send two), and the lowest and highest values it sends |
+| `type` | `fader` | `jog` for a jog wheel, which sends turns, or `fader` for a fader or knob, which sends its position |
+| `actions` | | what it does whenever it moves |
+| `invert` | false | for a jog, scroll the other way. For a fader, its top sends the lowest value, like most tempo faders |
+| `touchMultiplier` (jog) | 10 | speed-up while the jog top is touched |
+| `touchHoldSeconds` (jog) | 1.0 | how long the speed-up lasts after letting go |
+| `centerThreshold` (jog) | 50 | values below this are clockwise turns, and values above are counter-clockwise |
+| `midi`, `touch`, `fine`, `low`, `high` | | the learned control: its MIDI message, a jog's touch sensor, the CC with a fader's fine value (for high-resolution faders, which send two), and the lowest and highest values a fader sends |
 
-An action:
+An action that scrolls, for a jog wheel:
+
+| key | default | meaning |
+|---|---|---|
+| `type` | | `scroll` |
+| `wheelUnitsPerTick` | 5 | scroll distance per jog tick, in wheel units (120 = one mouse-wheel notch) |
+
+An action that sends a request, for a fader or knob:
 
 | key | default | meaning |
 |---|---|---|
@@ -63,7 +81,7 @@ An action:
 | `range` | `[0, 1]` | the value at the bottom and the top of the control |
 | `decimals` | 0 | how many decimal places to round the value to |
 
-Requests to the same method and path go one at a time. If the control moves while one is on its way, the next request carries the newest value, and the fields of JSON bodies from different controls are merged. A fast sweep therefore sends only a few requests. A control sends its position whenever it moves, so after something else changes the setting, the control jumps it back to where the control is. Only faders and knobs work so far, not buttons or encoders.
+Requests to the same method and path go one at a time. If the control moves while one is on its way, the next request carries the newest value, and the fields of JSON bodies from different controls are merged. A fast sweep therefore sends only a few requests. A control sends its position whenever it moves, so after something else changes the setting, the control jumps it back to where the control is. Jog wheels can only scroll so far, and buttons and encoders don't work yet.
 
 ## Install
 
@@ -80,13 +98,17 @@ Settings are in `config.json`, and changes take effect within a couple of second
 
 | key | default | meaning |
 |---|---|---|
+| `portName` | Reloop Ready | MIDI input to listen to (part of its name is enough) |
+| `connectionAlerts` | true | notify when the controller connects or disconnects |
+
+On Windows, the jog wheel's settings are in its control: see [Controls](#controls-windows). On macOS, they're at the top level:
+
+| key | default | meaning |
+|---|---|---|
 | `touchMultiplier` | 10 | speed-up while the jog top is touched |
 | `touchHoldSeconds` | 1.0 | how long the speed-up lasts after letting go |
-| `pixelsPerTick` (macOS) | 4 | scroll distance per jog tick, in pixels; decimals like `2.5` work |
-| `wheelUnitsPerTick` (Windows) | 5 | scroll distance per jog tick, in wheel units (120 = one mouse-wheel notch) |
+| `pixelsPerTick` | 4 | scroll distance per jog tick, in pixels; decimals like `2.5` work |
 | `invert` | false | flip the scroll direction |
-| `connectionAlerts` | true | notify when the controller connects or disconnects |
-| `portName` | Reloop Ready | MIDI input to listen to (part of its name is enough) |
 
 ## Terminal commands
 
@@ -98,4 +120,4 @@ Both versions have the same commands: `jog-scroll run` (scroll without the icon,
 - `windows/`: the C#/.NET app and its build and install scripts
 - `icon/`: the app icon, shared by both. `make-icon.swift` draws it, and `make-ico.ps1` converts it for Windows.
 
-The two versions share no code, so the scrolling rules above are written twice: `JogEngine` in `macos/main.swift` and in `windows/Engine.cs`. When you change how scrolling behaves, change both and update this README.
+The two versions share no code, so the scrolling rules above are written twice: `JogEngine` in `macos/main.swift`, and in `windows/Jog.cs` (the jog wheel) and `ScrollOutput` in `windows/Outputs.cs` (the scrolling). When you change how scrolling behaves, change both and update this README. Controls are Windows-only so far, so the two versions' settings files differ.

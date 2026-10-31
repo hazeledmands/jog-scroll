@@ -26,20 +26,49 @@ public sealed record MidiMatch
     }
 }
 
-// Missing keys keep these defaults, so adding a setting never discards a learned jog wheel.
+// Missing keys keep these defaults, so adding a setting never discards a learned control.
 public sealed class Config
 {
     public string PortName { get; set; } = "Reloop Ready";   // substring of the MIDI input name; "" = all inputs
-    public MidiMatch? Touch { get; set; }
-    public MidiMatch? Jog { get; set; }
-    public double TouchHoldSeconds { get; set; } = 1.0;      // how long "fast" lasts after releasing the jog top
-    public double TouchMultiplier { get; set; } = 10;        // Bome: if gt>0 then oo=10*oo
-    public double WheelUnitsPerTick { get; set; } = 5;       // 120 = one mouse-wheel notch; fractions accumulate
-    public bool Invert { get; set; }                         // flip scroll direction
-    public int CenterThreshold { get; set; } = 50;           // Bome: values below this are clockwise
     public bool ConnectionAlerts { get; set; } = true;       // notify when the controller is plugged in or out
     public Dictionary<string, ServerConfig> Servers { get; set; } = new();   // where controls send their changes, by name
-    public List<MidiControl> Controls { get; set; } = new();                 // faders and knobs, and what each one changes
+    public List<MidiControl> Controls { get; set; } = new();                 // jog wheels, faders and knobs, and what each one does
+
+    // Settings from before the jog wheel was a control. ConfigFile.Load moves them into one.
+    public MidiMatch? Touch { get; set; }
+    public MidiMatch? Jog { get; set; }
+    public double? TouchHoldSeconds { get; set; }
+    public double? TouchMultiplier { get; set; }
+    public double? WheelUnitsPerTick { get; set; }
+    public bool? Invert { get; set; }
+    public int? CenterThreshold { get; set; }
+
+    /// The jog wheel that the menu's scrolling settings and Learn Jog Wheel are for: the first one.
+    [JsonIgnore] public MidiControl? MainJog => Controls.FirstOrDefault(c => c.IsJog);
+
+    /// Moves the settings from before the jog wheel was a control into a jog control. Returns whether it changed anything.
+    public bool Migrate()
+    {
+        if (Touch == null && Jog == null && TouchHoldSeconds == null && TouchMultiplier == null
+            && WheelUnitsPerTick == null && Invert == null && CenterThreshold == null) return false;
+        if (MainJog == null)
+        {
+            var jog = MidiControl.NewJog();
+            jog.Midi = Jog;
+            jog.Touch = Touch;
+            jog.TouchHoldSeconds = TouchHoldSeconds ?? jog.TouchHoldSeconds;
+            jog.TouchMultiplier = TouchMultiplier ?? jog.TouchMultiplier;
+            jog.CenterThreshold = CenterThreshold ?? jog.CenterThreshold;
+            jog.Invert = Invert ?? false;
+            jog.Actions[0].WheelUnitsPerTick = WheelUnitsPerTick ?? jog.Actions[0].WheelUnitsPerTick;
+            Controls.Insert(0, jog);
+        }
+        Touch = Jog = null;
+        TouchHoldSeconds = TouchMultiplier = WheelUnitsPerTick = null;
+        Invert = null;
+        CenterThreshold = null;
+        return true;
+    }
 }
 
 /// A server that controls send changes to. Its url and headers can use ${file:PATH#key} and ${env:NAME}.
@@ -50,32 +79,61 @@ public sealed class ServerConfig
     public Dictionary<string, string> Headers { get; set; } = new();
 }
 
-/// A fader or knob, and the changes its position sends.
+/// Something on the controller, and what it does. A jog wheel sends turns; a fader or knob sends its position.
 public sealed class MidiControl
 {
     public string Name { get; set; } = "";
+    public string Type { get; set; } = "fader";              // "fader" (also for knobs) or "jog"
     public MidiMatch? Midi { get; set; }                     // learned from the menu or `jog-scroll learn-control`
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool Invert { get; set; }                         // a fader whose top sends the lowest value, or a jog turning the other way
+
+    // Faders and knobs
     public byte? Fine { get; set; }                          // for a high-resolution fader: the CC with its fine value
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public int? Low { get; set; }                            // the lowest and highest values it sends, found while learning
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public int? High { get; set; }
-    public bool Invert { get; set; }                         // for controls whose top sends the lowest value
+
+    // Jog wheels
+    public MidiMatch? Touch { get; set; }                    // the sensor in the jog's top
+    public double? TouchMultiplier { get; set; }             // speed-up while the top is touched (Bome: if gt>0 then oo=10*oo)
+    public double? TouchHoldSeconds { get; set; }            // how long the speed-up lasts after letting go
+    public int? CenterThreshold { get; set; }                // values below this are clockwise
+
     public List<ControlAction> Actions { get; set; } = new();
+
+    [JsonIgnore] public bool IsJog => Type.Equals("jog", StringComparison.OrdinalIgnoreCase);
+    [JsonIgnore] public bool IsFader => Type.Equals("fader", StringComparison.OrdinalIgnoreCase);
+
+    /// A jog wheel that scrolls, with every setting written out so they're easy to find in the settings file.
+    public static MidiControl NewJog() => new()
+    {
+        Name = "Jog",
+        Type = "jog",
+        TouchMultiplier = 10,
+        TouchHoldSeconds = 1.0,
+        CenterThreshold = 50,
+        Actions = { new ControlAction { Type = "scroll", WheelUnitsPerTick = 5 } },
+    };
 }
 
-/// One request a control sends when it moves. "$value" in the path or body is the control's position,
-/// scaled to Range: a body string that's exactly "$value" becomes a number.
+/// One thing a control does when it moves. Either a request to a server, where "$value" in the path or body is
+/// the control's position scaled to Range (a body string that's exactly "$value" becomes a number), or, for
+/// a jog wheel, scrolling.
 public sealed class ControlAction
 {
-    public string Server { get; set; } = "";
-    public string Method { get; set; } = "POST";
-    public string Path { get; set; } = "";
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Type { get; set; }                        // "scroll", or leave it out for a request to a server
+
+    // Requests
+    public string? Server { get; set; }
+    public string? Method { get; set; }                      // POST if left out
+    public string? Path { get; set; }
     public JsonNode? Body { get; set; }
-    public double[] Range { get; set; } = { 0, 1 };         // the value at the bottom and at the top
-    public int Decimals { get; set; }
+    public double[]? Range { get; set; }                     // the value at the bottom and at the top; [0, 1] if left out
+    public int? Decimals { get; set; }
+
+    // Scrolling
+    public double? WheelUnitsPerTick { get; set; }           // 120 = one mouse-wheel notch; fractions accumulate
+
+    [JsonIgnore] public bool IsScroll => string.Equals(Type, "scroll", StringComparison.OrdinalIgnoreCase);
 }
 
 public static class ConfigFile
@@ -86,6 +144,7 @@ public static class ConfigFile
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         PropertyNameCaseInsensitive = true,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
         WriteIndented = true,
     };
 
@@ -98,8 +157,11 @@ public static class ConfigFile
 
     public static Config Load()
     {
-        try { return JsonSerializer.Deserialize<Config>(File.ReadAllText(Path), options) ?? new Config(); }
+        Config cfg;
+        try { cfg = JsonSerializer.Deserialize<Config>(File.ReadAllText(Path), options) ?? new Config(); }
         catch { return new Config(); }
+        if (cfg.Migrate()) Save(cfg);
+        return cfg;
     }
 
     public static void Save(Config cfg)

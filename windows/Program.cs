@@ -5,7 +5,7 @@
 //   JogScroll.exe            the tray app (what runs at login)
 //   jog-scroll.exe run       same, without the tray icon, logging to the terminal
 //   jog-scroll.exe learn     record which MIDI messages your jog wheel sends
-//   jog-scroll.exe learn-control NAME  record which fader or knob a control uses
+//   jog-scroll.exe learn-control NAME  record which jog wheel, fader or knob a control uses
 //   jog-scroll.exe monitor   print every incoming MIDI message
 //   jog-scroll.exe login on|off  start (or stop starting) the tray app at login
 
@@ -40,7 +40,7 @@ static class Program
                     Usage:
                       jog-scroll run          run without the tray icon, logging to the terminal
                       jog-scroll learn        record which MIDI messages your jog wheel sends
-                      jog-scroll learn-control NAME  record which fader or knob the control NAME uses
+                      jog-scroll learn-control NAME  record which jog wheel, fader or knob the control NAME uses
                       jog-scroll monitor      print every incoming MIDI message
                       jog-scroll login on|off start (or stop starting) the tray app at login
                     The tray app is JogScroll.exe.
@@ -60,18 +60,21 @@ static class Program
 #if CLI
     static int RunScroller()
     {
-        var engine = new JogEngine(ConfigFile.Load());
-        if (engine.Cfg.Touch is not { } touch || engine.Cfg.Jog is not { } jog)
+        var controls = new ControlRouter(ConfigFile.Load()) { OnResult = (_, error) => { if (error != null) Log.Write(error); } };
+        var learned = controls.Cfg.Controls.Where(c => c.Midi != null).ToList();
+        if (learned.Count == 0)
         {
             Console.WriteLine("No jog wheel learned yet. Run:  jog-scroll learn");
             return 1;
         }
-        Log.Write($"Jog: {jog.Description}  |  Touch: {touch.Description}");
-        var controls = new ControlRouter(engine) { OnResult = (_, error) => { if (error != null) Log.Write(error); } };
-        foreach (var c in engine.Cfg.Controls.Where(c => c.Midi != null))
-            Log.Write($"{c.Name}: {c.Midi!.Description} → {string.Join(", ", c.Actions.Select(a => $"{a.Server} {a.Path}"))}");
+        foreach (var c in learned)
+        {
+            string touch = c.Touch is { } t ? $" (touch: {t.Description})" : "";
+            string actions = string.Join(", ", c.Actions.Select(a => a.IsScroll ? "scroll" : $"{a.Server} {a.Path}"));
+            Log.Write($"{c.Name}: {c.Midi!.Description}{touch} → {actions}");
+        }
         Log.Write("Running. Press Ctrl-C to quit.");
-        using var input = new MidiInput(m => { if (!controls.Handle(m)) engine.Handle(m); }, engine.MatchesPort);
+        using var input = new MidiInput(controls.Handle, controls.MatchesPort);
         Application.Run();
         return 0;
     }
@@ -86,56 +89,49 @@ static class Program
 
     static int RunLearn()
     {
-        var engine = new JogEngine(ConfigFile.Load());
-        var shown = JogEngine.LearnStep.None;
-        engine.OnChange = () =>
-        {
-            if (engine.Step == shown) return;
-            shown = engine.Step;
-            switch (engine.Step)
-            {
-                case JogEngine.LearnStep.Touch:
-                    Console.WriteLine("\nStep 1 of 2: Touch the TOP of the jog wheel you want to use, then let go.");
-                    break;
-                case JogEngine.LearnStep.Spin:
-                    Console.WriteLine($"  ✓ Touch = {engine.Cfg.Touch!.Description}  (device: {engine.Cfg.PortName})");
-                    Console.WriteLine("\nStep 2 of 2: Now spin the jog wheel slowly by its EDGE (don't touch the top).");
-                    break;
-            }
-        };
-        engine.OnLearned = () =>
-        {
-            Console.WriteLine($"  ✓ Jog = {engine.Cfg.Jog!.Description}");
-            Console.WriteLine($"\nSaved to {ConfigFile.Path}\n");
-            Environment.Exit(0);
-        };
-        using var input = new MidiInput(engine.Handle, _ => true) { Verbose = false };
-        engine.StartLearning();
-        Application.Run();
-        return 0;
+        var controls = new ControlRouter(ConfigFile.Load());
+        return Learn(controls, controls.MainJogToLearn());
     }
 
     static int RunLearnControl(string name)
     {
-        var engine = new JogEngine(ConfigFile.Load());
-        var controls = new ControlRouter(engine);
+        var controls = new ControlRouter(ConfigFile.Load());
         if (controls.Find(name) is not { } control)
         {
-            var names = engine.Cfg.Controls.Select(c => $"\"{c.Name}\"").ToList();
+            var names = controls.Cfg.Controls.Select(c => $"\"{c.Name}\"").ToList();
             Console.WriteLine(names.Count == 0
                 ? $"No controls yet. Add them to {ConfigFile.Path}"
                 : $"Usage: jog-scroll learn-control NAME, where NAME is one of {string.Join(", ", names)}");
             return 1;
         }
+        if (!controls.CanLearn(control))
+        {
+            Console.WriteLine($"{control.Name}: there's no control type called \"{control.Type}\". Use \"jog\" or \"fader\".");
+            return 1;
+        }
+        return Learn(controls, control);
+    }
+
+    /// Prints each step of learning a control, and saves it once it's learned.
+    static int Learn(ControlRouter controls, MidiControl control)
+    {
+        string? shown = null;
+        controls.OnChange = () =>
+        {
+            if (controls.LearnPrompt is not { } prompt || prompt == shown) return;
+            shown = prompt;
+            Console.WriteLine($"\n{prompt}");
+        };
         controls.OnLearned = c =>
         {
             Console.WriteLine($"  ✓ {c.Name} = {c.Midi!.Description}");
+            if (c.Touch is { } touch) Console.WriteLine($"  ✓ Touch = {touch.Description}");
+            if (c.IsJog) Console.WriteLine($"  ✓ Device = {controls.Cfg.PortName}");
             Console.WriteLine($"\nSaved to {ConfigFile.Path}\n");
             Environment.Exit(0);
         };
-        Console.WriteLine($"Move the fader or knob for {control.Name} all the way down and up. It saves when you stop.");
-        using var input = new MidiInput(m => controls.Handle(m), engine.MatchesPort) { Verbose = false };
         controls.StartLearning(control);
+        using var input = new MidiInput(controls.Handle, name => controls.ListensEverywhere || controls.MatchesPort(name)) { Verbose = false };
         Application.Run();
         return 0;
     }
