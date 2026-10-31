@@ -32,6 +32,30 @@ static class Native
     [DllImport("winmm.dll")] public static extern uint midiInReset(IntPtr hMidiIn);
     [DllImport("winmm.dll")] public static extern uint midiInClose(IntPtr hMidiIn);
 
+    // MARK: WinMM MIDI output
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    public struct MIDIOUTCAPS
+    {
+        public ushort wMid;
+        public ushort wPid;
+        public uint vDriverVersion;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string szPname;
+        public ushort wTechnology;
+        public ushort wVoices;
+        public ushort wNotes;
+        public ushort wChannelMask;
+        public uint dwSupport;
+    }
+
+    [DllImport("winmm.dll")] public static extern uint midiOutGetNumDevs();
+    [DllImport("winmm.dll", CharSet = CharSet.Unicode, EntryPoint = "midiOutGetDevCapsW")]
+    public static extern uint midiOutGetDevCaps(UIntPtr uDeviceID, out MIDIOUTCAPS caps, uint cbMidiOutCaps);
+    [DllImport("winmm.dll")]
+    public static extern uint midiOutOpen(out IntPtr hMidiOut, uint uDeviceID, IntPtr callback, IntPtr instance, uint flags);
+    [DllImport("winmm.dll")] public static extern uint midiOutShortMsg(IntPtr hMidiOut, uint dwMsg);
+    [DllImport("winmm.dll")] public static extern uint midiOutClose(IntPtr hMidiOut);
+
     // MARK: Mouse and keyboard
 
     public const uint INPUT_MOUSE = 0;

@@ -39,7 +39,7 @@ public sealed class ControlRouter
     public ControlRouter(Config cfg)
     {
         this.cfg = cfg;
-        outputs = new Outputs(() => this.cfg.Servers);
+        outputs = new Outputs(() => this.cfg.Servers, () => this.cfg.OutputPort);
     }
 
     /// Called after each action with what it went to (a server's name, say) and null, or why it failed.

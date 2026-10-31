@@ -139,6 +139,58 @@ public sealed class MidiInput : IDisposable
     }
 }
 
+/// Sends MIDI to the controller, for its lights. Opens the output whose name contains `Port` when it's
+/// first needed, and again after an error such as the controller being unplugged. Runs on the UI thread.
+public sealed class MidiOutput : IDisposable
+{
+    IntPtr handle;
+    string openPort = "";
+
+    /// The output's name, or part of it. Changing it opens a different output next time.
+    public string Port = "";
+
+    /// Sends one message. Returns null, or why it couldn't.
+    public string? Send(byte status, byte data1, byte data2)
+    {
+        if (handle != IntPtr.Zero && openPort != Port) Close();
+        if (handle == IntPtr.Zero && Open() is { } error) return error;
+        uint err = midiOutShortMsg(handle, (uint)(status | (data1 << 8) | (data2 << 16)));
+        if (err == 0) return null;
+        Close();   // try again next time, in case it was unplugged and comes back
+        return $"Couldn't send to \"{Port}\" (error {err})";
+    }
+
+    string? Open()
+    {
+        uint count = midiOutGetNumDevs();
+        var size = (uint)System.Runtime.InteropServices.Marshal.SizeOf<MIDIOUTCAPS>();
+        for (uint id = 0; id < count; id++)
+        {
+            if (midiOutGetDevCaps((UIntPtr)id, out var caps, size) != 0) continue;
+            if (Port.Length == 0 || !caps.szPname.Contains(Port, StringComparison.OrdinalIgnoreCase)) continue;
+            uint err = midiOutOpen(out handle, id, IntPtr.Zero, IntPtr.Zero, 0);
+            if (err != 0)
+            {
+                handle = IntPtr.Zero;
+                return err == MMSYSERR_ALLOCATED
+                    ? $"\"{caps.szPname}\" is in use by another program"
+                    : $"Couldn't open \"{caps.szPname}\" (error {err})";
+            }
+            openPort = Port;
+            return null;
+        }
+        return $"There's no MIDI output called \"{Port}\" to light the controller with";
+    }
+
+    void Close()
+    {
+        if (handle != IntPtr.Zero) midiOutClose(handle);
+        handle = IntPtr.Zero;
+    }
+
+    public void Dispose() => Close();
+}
+
 public static class Log
 {
     public static void Write(string s) => Console.WriteLine($"[{DateTime.Now:T}] {s}");

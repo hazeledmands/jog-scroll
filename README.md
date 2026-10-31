@@ -79,9 +79,46 @@ An action that sends a request, for a fader or knob:
 | `path` | | added to the server's `url`. Each part is escaped, so names can have spaces |
 | `body` | none | JSON to send. A string that's exactly `"$value"` becomes the control's value as a number, and `$value` inside a longer string (or in `path`) is replaced as text |
 | `range` | `[0, 1]` | the value at the bottom and the top of the control |
-| `decimals` | 0 | how many decimal places to round the value to |
+| `decimals` | 0 | how many decimal places to round the value to. Set it when `range` is small, like `[0, 1]` |
+| `response` | none | where to find a number in the server's answer, to `show`: a key, or keys separated by dots for objects inside it (`scope.index`) |
+| `show` | none | lights on the controller that show that number, or the value sent if there's no `response`: see below |
 
-Requests to the same method and path go one at a time. If the control moves while one is on its way, the next request carries the newest value, and the fields of JSON bodies from different controls are merged. A fast sweep therefore sends only a few requests. A control sends its position whenever it moves, so after something else changes the setting, the control jumps it back to where the control is. Jog wheels can only scroll so far, and buttons and encoders don't work yet.
+`show` lights the first *N* of a group of lights, where *N* is the number, and turns them all off `seconds` after the last change:
+
+| key | default | meaning |
+|---|---|---|
+| `lights` | | the MIDI message for each light, in order, like `{"status": 149, "data1": 20}` |
+| `on`, `off` | 127, 0 | the values that turn a light on and off. On some controllers, `on` is the color |
+| `seconds` | 1 | how long they stay lit |
+
+The lights are sent to the controller's MIDI output: `portName` with "In" at the end changed to "Out", or `outputPortName` if you set it. On the Reloop Ready, a pad's light uses the same message the pad sends when pressed. The right deck's pads are `status` 149 with `data1` 20–27, and the left deck's are probably 148 with the same numbers. Their `on` value is a color, two bits each of red, green and blue (`0b00RRGGBB`): 48 is red, 12 green, 3 blue, 15 cyan, 60 yellow and 63 white.
+
+For example, with [Hue Tray](https://github.com/hazeledmands/huetray)'s scopes, a knob can choose which lights the faders change, and light as many pads as the scope's number:
+
+```json
+{
+  "name": "Scope",
+  "actions": [{
+    "server": "hue", "method": "PUT", "path": "scope", "body": { "position": "$value" }, "decimals": 2,
+    "response": "index",
+    "show": {
+      "lights": [
+        {"status": 149, "data1": 20},
+        {"status": 149, "data1": 21},
+        {"status": 149, "data1": 22},
+        {"status": 149, "data1": 23},
+        {"status": 149, "data1": 24},
+        {"status": 149, "data1": 25},
+        {"status": 149, "data1": 26},
+        {"status": 149, "data1": 27}
+      ],
+      "on": 15
+    }
+  }]
+}
+```
+
+Requests to the same method and path go one at a time. If the control moves while one is on its way, the next request carries the newest value, and the fields of JSON bodies from different controls are merged. A fast sweep therefore sends only a few requests. A control sends its position whenever it moves, so after something else changes the setting, the control jumps it back to where the control is. Jog wheels can only scroll so far, and buttons and encoders don't work yet. To find which MIDI message a light uses, `jog-scroll monitor` shows what each pad sends.
 
 ## Install
 
@@ -100,6 +137,7 @@ Settings are in `config.json`, and changes take effect within a couple of second
 |---|---|---|
 | `portName` | Reloop Ready | MIDI input to listen to (part of its name is enough) |
 | `connectionAlerts` | true | notify when the controller connects or disconnects |
+| `outputPortName` (Windows) | | the MIDI output for the controller's lights, if it isn't `portName` with "In" changed to "Out" |
 
 On Windows, the jog wheel's settings are in its control: see [Controls](#controls-windows). On macOS, they're at the top level:
 

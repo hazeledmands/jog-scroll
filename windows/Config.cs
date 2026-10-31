@@ -31,6 +31,7 @@ public sealed class Config
 {
     public string PortName { get; set; } = "Reloop Ready";   // substring of the MIDI input name; "" = all inputs
     public bool ConnectionAlerts { get; set; } = true;       // notify when the controller is plugged in or out
+    public string? OutputPortName { get; set; }              // MIDI output for the controller's lights; worked out from PortName if left out
     public Dictionary<string, ServerConfig> Servers { get; set; } = new();   // where controls send their changes, by name
     public List<MidiControl> Controls { get; set; } = new();                 // jog wheels, faders and knobs, and what each one does
 
@@ -42,6 +43,11 @@ public sealed class Config
     public double? WheelUnitsPerTick { get; set; }
     public bool? Invert { get; set; }
     public int? CenterThreshold { get; set; }
+
+    /// The MIDI output for the controller's lights: OutputPortName, or PortName with "In" at the end changed to "Out".
+    [JsonIgnore]
+    public string OutputPort => OutputPortName
+        ?? (PortName.EndsWith(" In", StringComparison.OrdinalIgnoreCase) ? PortName[..^3] + " Out" : PortName);
 
     /// The jog wheel that the menu's scrolling settings and Learn Jog Wheel are for: the first one.
     [JsonIgnore] public MidiControl? MainJog => Controls.FirstOrDefault(c => c.IsJog);
@@ -129,11 +135,23 @@ public sealed class ControlAction
     public JsonNode? Body { get; set; }
     public double[]? Range { get; set; }                     // the value at the bottom and at the top; [0, 1] if left out
     public int? Decimals { get; set; }
+    public string? Response { get; set; }                    // where the number to show is in the answer: a key, or keys separated by dots
+    public ShowConfig? Show { get; set; }                    // lights on the controller that show that number
 
     // Scrolling
     public double? WheelUnitsPerTick { get; set; }           // 120 = one mouse-wheel notch; fractions accumulate
 
     [JsonIgnore] public bool IsScroll => string.Equals(Type, "scroll", StringComparison.OrdinalIgnoreCase);
+}
+
+/// Lights on the controller that show a number by lighting that many of them, for a moment. The number is the one
+/// in the answer that Response points to, or the value sent if there's no Response.
+public sealed class ShowConfig
+{
+    public List<MidiMatch> Lights { get; set; } = new();     // in order: the first lights for 1, the first two for 2…
+    public int On { get; set; } = 127;                       // the value that lights one. On some controllers, it's the color
+    public int Off { get; set; }
+    public double Seconds { get; set; } = 1;                 // how long they stay lit after the last change
 }
 
 public static class ConfigFile

@@ -13,18 +13,24 @@ interface IOutput
     void Send(ControlAction action, double value);
 }
 
-/// Carries out actions: scrolling, and requests to servers. It makes an output for each server in the settings
-/// as it's first needed, and again after the settings change. Everything runs on the UI thread.
+/// Carries out actions: scrolling, requests to servers, and showing numbers on the controller's lights. It
+/// makes an output for each server in the settings as it's first needed, and again after the settings change.
+/// Everything runs on the UI thread.
 public sealed class Outputs
 {
     readonly Func<Dictionary<string, ServerConfig>> servers;
     readonly Dictionary<string, (ServerConfig Config, IOutput Output)> made = new();
     public readonly ScrollOutput Scroll = new();
+    public readonly Lights Lights;
 
-    /// Called after each request with the server's name (or "scroll") and null, or why it failed.
+    /// Called after each request with the server's name (or "scroll" or "lights") and null, or why it failed.
     public Action<string, string?>? OnResult;
 
-    public Outputs(Func<Dictionary<string, ServerConfig>> servers) { this.servers = servers; }
+    public Outputs(Func<Dictionary<string, ServerConfig>> servers, Func<string> outputPort)
+    {
+        this.servers = servers;
+        Lights = new Lights(outputPort, error => OnResult?.Invoke("lights", error));
+    }
 
     /// For a jog wheel: it turned this many ticks, already sped up and inverted as the control says.
     public void Turn(MidiControl control, ControlAction action, double ticks)
@@ -57,7 +63,7 @@ public sealed class Outputs
         {
             IOutput? output = config.Type.ToLowerInvariant() switch
             {
-                "http" => new HttpOutput(name, config, result => OnResult?.Invoke(name, result)),
+                "http" => new HttpOutput(name, config, result => OnResult?.Invoke(name, result), Answered),
                 _ => null,
             };
             if (output == null)
@@ -69,11 +75,74 @@ public sealed class Outputs
         }
         var range = action.Range ?? new double[] { 0, 1 };
         double low = range.ElementAtOrDefault(0), high = range.Length > 1 ? range[1] : 1;
-        entry.Output.Send(action, Math.Round(low + position * (high - low), Math.Clamp(action.Decimals ?? 0, 0, 15)));
+        double value = Math.Round(low + position * (high - low), Math.Clamp(action.Decimals ?? 0, 0, 15));
+        entry.Output.Send(action, value);
+        if (action.Show is { } show && action.Response == null) Lights.Show(show, value);   // nothing to wait for
+    }
+
+    /// A server answered a request that this action was part of.
+    void Answered(ControlAction action, JsonNode? answer)
+    {
+        if (action.Show is not { } show || action.Response is not { } path) return;
+        if (Find(answer, path) is double number) Lights.Show(show, number);
+        else OnResult?.Invoke("lights", $"The answer to {action.Method ?? "POST"} {action.Path} has no number at \"{path}\"");
+    }
+
+    /// The number at a key in a JSON answer, or at keys separated by dots ("scope.index") in objects inside it.
+    public static double? Find(JsonNode? node, string path)
+    {
+        foreach (var key in path.Split('.'))
+            node = node is JsonObject o ? o[key] : null;
+        return node is JsonValue v && v.TryGetValue<double>(out var d) ? d : null;
     }
 
     /// Forgets what belonged to the old settings.
     public void Reset() => Scroll.Reset();
+}
+
+/// Shows numbers on the controller's lights: lights that many of a group, and turns them all off a moment after the last change.
+public sealed class Lights
+{
+    readonly MidiOutput output = new();
+    readonly Func<string> port;
+    readonly Action<string?> report;
+    readonly Dictionary<ShowConfig, CancellationTokenSource> timers = new(ReferenceEqualityComparer.Instance);
+
+    public Lights(Func<string> port, Action<string?> report)
+    {
+        this.port = port;
+        this.report = report;
+    }
+
+    public void Show(ShowConfig show, double number)
+    {
+        int count = (int)Math.Clamp(Math.Round(number), 0, show.Lights.Count);
+        for (int i = 0; i < show.Lights.Count; i++)
+            if (!Set(show.Lights[i], i < count ? show.On : show.Off)) return;
+        report(null);
+
+        if (timers.Remove(show, out var old)) old.Cancel();
+        var cts = new CancellationTokenSource();
+        timers[show] = cts;
+        _ = OffAfter(show, cts.Token);
+    }
+
+    async Task OffAfter(ShowConfig show, CancellationToken token)
+    {
+        try { await Task.Delay(TimeSpan.FromSeconds(Math.Max(0, show.Seconds)), token); }
+        catch (TaskCanceledException) { return; }
+        timers.Remove(show);
+        foreach (var light in show.Lights)
+            if (!Set(light, show.Off)) return;
+    }
+
+    bool Set(MidiMatch light, int value)
+    {
+        output.Port = port();
+        var error = output.Send(light.Status, light.Data1, (byte)Math.Clamp(value, 0, 127));
+        if (error != null) report(error);
+        return error == null;
+    }
 }
 
 /// Scrolls the window under the mouse. While Shift is held, apps scroll sideways instead.
@@ -138,14 +207,18 @@ sealed class HttpOutput : IOutput
     readonly string name;
     readonly ServerConfig config;
     readonly Action<string?> report;
+    readonly Action<ControlAction, JsonNode?> answered;
     readonly Dictionary<(string Method, string Path), JsonNode?> pending = new();   // the body waiting to be sent
+    readonly Dictionary<(string Method, string Path), HashSet<ControlAction>> pendingActions = new();   // the actions in it
     readonly HashSet<(string Method, string Path)> sending = new();
 
-    public HttpOutput(string name, ServerConfig config, Action<string?> report)
+    /// `answered` is called with each action in a request that succeeded, and the server's answer.
+    public HttpOutput(string name, ServerConfig config, Action<string?> report, Action<ControlAction, JsonNode?> answered)
     {
         this.name = name;
         this.config = config;
         this.report = report;
+        this.answered = answered;
     }
 
     public void Send(ControlAction action, double value)
@@ -165,6 +238,8 @@ sealed class HttpOutput : IOutput
         {
             pending[key] = body;
         }
+        if (!pendingActions.TryGetValue(key, out var actions)) pendingActions[key] = actions = new(ReferenceEqualityComparer.Instance);
+        actions.Add(action);
         if (sending.Add(key)) _ = Run(key);
     }
 
@@ -202,12 +277,19 @@ sealed class HttpOutput : IOutput
         try
         {
             while (pending.Remove(key, out var body))
-                report(await Request(key.Method, key.Path, body));
+            {
+                pendingActions.Remove(key, out var actions);
+                var (error, answer) = await Request(key.Method, key.Path, body);
+                report(error);
+                if (error == null && actions != null)
+                    foreach (var action in actions) answered(action, answer);
+            }
         }
         finally { sending.Remove(key); }
     }
 
-    async Task<string?> Request(string method, string path, JsonNode? body)
+    /// Returns why it failed, or null and the server's answer (null if it wasn't JSON).
+    async Task<(string? Error, JsonNode? Answer)> Request(string method, string path, JsonNode? body)
     {
         HttpRequestMessage request;
         try
@@ -216,7 +298,7 @@ sealed class HttpOutput : IOutput
             foreach (var (header, value) in config.Headers)
                 request.Headers.TryAddWithoutValidation(header, Substitutions.Apply(value));
         }
-        catch (FormatException e) { return $"{name}: {e.Message}"; }   // UriFormatException is one too
+        catch (FormatException e) { return ($"{name}: {e.Message}", null); }   // UriFormatException is one too
         if (body != null) request.Content = new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json");
 
         using (request)
@@ -224,15 +306,19 @@ sealed class HttpOutput : IOutput
             try
             {
                 using var response = await http.SendAsync(request);
-                if (response.IsSuccessStatusCode) return null;
                 string text = await response.Content.ReadAsStringAsync();
+                if (response.IsSuccessStatusCode)
+                {
+                    try { return (null, text.Length == 0 ? null : JsonNode.Parse(text)); }
+                    catch (JsonException) { return (null, null); }
+                }
                 string? error = null;
                 try { error = JsonNode.Parse(text)?["error"]?.GetValue<string>(); }
                 catch (Exception e) when (e is JsonException or InvalidOperationException) { }
-                return $"{name}: couldn't {method} {path}: {error ?? ((int)response.StatusCode).ToString(CultureInfo.InvariantCulture)}";
+                return ($"{name}: couldn't {method} {path}: {error ?? ((int)response.StatusCode).ToString(CultureInfo.InvariantCulture)}", null);
             }
-            catch (HttpRequestException) { return $"Couldn't reach {name}. Is it running?"; }
-            catch (TaskCanceledException) { return $"{name} didn't answer"; }
+            catch (HttpRequestException) { return ($"Couldn't reach {name}. Is it running?", null); }
+            catch (TaskCanceledException) { return ($"{name} didn't answer", null); }
         }
     }
 
