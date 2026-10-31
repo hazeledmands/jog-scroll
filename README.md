@@ -8,6 +8,32 @@ How it behaves:
 - While you hold Shift on your keyboard, the jog scrolls sideways instead. Turning it the way that normally scrolls up scrolls left.
 - It notices the controller being plugged in or unplugged, and can show a notification when that happens.
 
+## Light controls (Windows)
+
+Faders and knobs on the controller can also dim lights or change their color temperature, through [Hue Tray](https://github.com/hazeledmands/huetray)'s local API. Hue Tray has to be running on the same computer. Jog Scroll reads Hue Tray's port and token from Hue Tray's own settings, so there's nothing to copy across.
+
+Add each control to `lightControls` in `config.json`:
+
+```json
+"lightControls": [
+  { "name": "Desk brightness", "targets": ["lights/Desk Anglepoise", "rooms/Office"], "set": "brightness" },
+  { "name": "Desk color temperature", "targets": ["lights/Desk Anglepoise"], "set": "colorTemp" }
+]
+```
+
+Then teach it which fader or knob to use: **Light Controls** in the menu, or `jog-scroll learn-light NAME`. Move the control all the way down and up, and it saves once you stop. It records the range the control covered, so each end of the control is each end of the light.
+
+| key | default | meaning |
+|---|---|---|
+| `name` | | what the menu calls it |
+| `targets` | | what to change, as Hue Tray API paths: `lights/NAME`, `rooms/NAME`, `zones/NAME` or `home` |
+| `set` | `brightness` | `brightness` (percent; the bottom turns the lights off) or `colorTemp` (kelvin) |
+| `min`, `max` | 0–100 or 2000–6500 | the value at each end of the control |
+| `invert` | false | for a control whose top sends the lowest value, like most tempo faders |
+| `midi`, `fine`, `low`, `high` | | the learned control: its MIDI message, the CC with its fine value (for high-resolution faders, which send two), and the lowest and highest values it sends |
+
+A control sets the lights to match its position whenever it moves, so after the lights change some other way, it jumps them back to where the control is. Setting the color temperature turns lights on, as it does everywhere in Hue Tray.
+
 ## Install
 
 | | Runs as | Install |
