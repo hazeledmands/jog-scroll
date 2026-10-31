@@ -33,7 +33,7 @@ The terminal commands are a separate console program, `jog-scroll.exe`, next to 
 
 - `jog-scroll run`: scroll without the tray icon, logging to the terminal
 - `jog-scroll learn`: teach it the jog wheel
-- `jog-scroll learn-light NAME`: teach it the fader or knob for a light control
+- `jog-scroll learn-control NAME`: teach it the fader or knob for a control
 - `jog-scroll monitor`: print every incoming MIDI message, for troubleshooting
 - `jog-scroll login on` / `login off`: start, or stop starting, at login
 

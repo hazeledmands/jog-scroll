@@ -8,31 +8,62 @@ How it behaves:
 - While you hold Shift on your keyboard, the jog scrolls sideways instead. Turning it the way that normally scrolls up scrolls left.
 - It notices the controller being plugged in or unplugged, and can show a notification when that happens.
 
-## Light controls (Windows)
+## Controls (Windows)
 
-Faders and knobs on the controller can also dim lights or change their color temperature, through [Hue Tray](https://github.com/hazeledmands/huetray)'s local API. Hue Tray has to be running on the same computer. Jog Scroll reads Hue Tray's port and token from Hue Tray's own settings, so there's nothing to copy across.
-
-Add each control to `lightControls` in `config.json`:
+Faders and knobs on the controller can send their position to other programs as HTTP requests: to dim lights through [Hue Tray](https://github.com/hazeledmands/huetray), for example. Each program is a server in `servers`, and each fader or knob is an entry in `controls` that lists the requests it sends:
 
 ```json
-"lightControls": [
-  { "name": "Desk brightness", "targets": ["lights/Desk Anglepoise", "rooms/Office"], "set": "brightness" },
-  { "name": "Desk color temperature", "targets": ["lights/Desk Anglepoise"], "set": "colorTemp" }
+"servers": {
+  "hue": {
+    "type": "http",
+    "url": "http://127.0.0.1:${file:%APPDATA%/hue-tray/config.json#apiPort}/api/v1/",
+    "headers": { "Authorization": "Bearer ${file:%APPDATA%/hue-tray/config.json#apiToken}" }
+  }
+},
+"controls": [
+  {
+    "name": "Desk brightness",
+    "actions": [
+      { "server": "hue", "method": "PATCH", "path": "lights/Desk Anglepoise", "body": { "brightness": "$value" }, "range": [0, 100] },
+      { "server": "hue", "method": "PATCH", "path": "rooms/Office", "body": { "brightness": "$value" }, "range": [0, 100] }
+    ]
+  }
 ]
 ```
 
-Then teach it which fader or knob to use: **Light Controls** in the menu, or `jog-scroll learn-light NAME`. Move the control all the way down and up, and it saves once you stop. It records the range the control covered, so each end of the control is each end of the light.
+Then teach it which fader or knob to use: **Controls** in the menu, or `jog-scroll learn-control NAME`. Move the control all the way down and up, and it saves once you stop. It records the range the control covered, so each end of the control is each end of `range`.
+
+A server:
+
+| key | default | meaning |
+|---|---|---|
+| `type` | `http` | the kind of server. `http` is the only one so far |
+| `url` | | the start of every request's URL |
+| `headers` | | headers sent with every request |
+
+`url` and `headers` can include `${file:PATH#key}`, a top-level value from a JSON file, and `${env:NAME}`, an environment variable. The example uses this to read Hue Tray's port and token from Hue Tray's own settings, so there's nothing to copy across. Environment variables in `PATH`, like `%APPDATA%`, are expanded.
+
+A control:
 
 | key | default | meaning |
 |---|---|---|
 | `name` | | what the menu calls it |
-| `targets` | | what to change, as Hue Tray API paths: `lights/NAME`, `rooms/NAME`, `zones/NAME` or `home` |
-| `set` | `brightness` | `brightness` (percent; the bottom turns the lights off) or `colorTemp` (kelvin) |
-| `min`, `max` | 0–100 or 2000–6500 | the value at each end of the control |
+| `actions` | | the requests it sends whenever it moves |
 | `invert` | false | for a control whose top sends the lowest value, like most tempo faders |
 | `midi`, `fine`, `low`, `high` | | the learned control: its MIDI message, the CC with its fine value (for high-resolution faders, which send two), and the lowest and highest values it sends |
 
-A control sets the lights to match its position whenever it moves, so after the lights change some other way, it jumps them back to where the control is. Setting the color temperature turns lights on, as it does everywhere in Hue Tray.
+An action:
+
+| key | default | meaning |
+|---|---|---|
+| `server` | | which server to send it to |
+| `method` | `POST` | the HTTP method |
+| `path` | | added to the server's `url`. Each part is escaped, so names can have spaces |
+| `body` | none | JSON to send. A string that's exactly `"$value"` becomes the control's value as a number, and `$value` inside a longer string (or in `path`) is replaced as text |
+| `range` | `[0, 1]` | the value at the bottom and the top of the control |
+| `decimals` | 0 | how many decimal places to round the value to |
+
+Requests to the same method and path go one at a time. If the control moves while one is on its way, the next request carries the newest value, and the fields of JSON bodies from different controls are merged. A fast sweep therefore sends only a few requests. A control sends its position whenever it moves, so after something else changes the setting, the control jumps it back to where the control is. Only faders and knobs work so far, not buttons or encoders.
 
 ## Install
 

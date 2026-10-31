@@ -5,7 +5,7 @@
 //   JogScroll.exe            the tray app (what runs at login)
 //   jog-scroll.exe run       same, without the tray icon, logging to the terminal
 //   jog-scroll.exe learn     record which MIDI messages your jog wheel sends
-//   jog-scroll.exe learn-light NAME  record which fader or knob a light control uses
+//   jog-scroll.exe learn-control NAME  record which fader or knob a control uses
 //   jog-scroll.exe monitor   print every incoming MIDI message
 //   jog-scroll.exe login on|off  start (or stop starting) the tray app at login
 
@@ -28,7 +28,7 @@ static class Program
         {
             case "run": return RunScroller();
             case "learn": return RunLearn();
-            case "learn-light": return RunLearnLight(string.Join(' ', args.Skip(1)));
+            case "learn-control": return RunLearnControl(string.Join(' ', args.Skip(1)));
             case "monitor": return RunMonitor();
             case "login":
                 bool on = args.ElementAtOrDefault(1) != "off";
@@ -40,7 +40,7 @@ static class Program
                     Usage:
                       jog-scroll run          run without the tray icon, logging to the terminal
                       jog-scroll learn        record which MIDI messages your jog wheel sends
-                      jog-scroll learn-light NAME  record which fader or knob the light control NAME uses
+                      jog-scroll learn-control NAME  record which fader or knob the control NAME uses
                       jog-scroll monitor      print every incoming MIDI message
                       jog-scroll login on|off start (or stop starting) the tray app at login
                     The tray app is JogScroll.exe.
@@ -67,11 +67,11 @@ static class Program
             return 1;
         }
         Log.Write($"Jog: {jog.Description}  |  Touch: {touch.Description}");
-        var lights = new LightControls(engine) { OnResult = error => { if (error != null) Log.Write(error); } };
-        foreach (var c in engine.Cfg.LightControls.Where(c => c.Midi != null))
-            Log.Write($"{c.Name}: {c.Midi!.Description} → {c.Set} of {string.Join(", ", c.Targets)}");
+        var controls = new ControlRouter(engine) { OnResult = (_, error) => { if (error != null) Log.Write(error); } };
+        foreach (var c in engine.Cfg.Controls.Where(c => c.Midi != null))
+            Log.Write($"{c.Name}: {c.Midi!.Description} → {string.Join(", ", c.Actions.Select(a => $"{a.Server} {a.Path}"))}");
         Log.Write("Running. Press Ctrl-C to quit.");
-        using var input = new MidiInput(m => { if (!lights.Handle(m)) engine.Handle(m); }, engine.MatchesPort);
+        using var input = new MidiInput(m => { if (!controls.Handle(m)) engine.Handle(m); }, engine.MatchesPort);
         Application.Run();
         return 0;
     }
@@ -115,27 +115,27 @@ static class Program
         return 0;
     }
 
-    static int RunLearnLight(string name)
+    static int RunLearnControl(string name)
     {
         var engine = new JogEngine(ConfigFile.Load());
-        var lights = new LightControls(engine);
-        if (lights.Find(name) is not { } control)
+        var controls = new ControlRouter(engine);
+        if (controls.Find(name) is not { } control)
         {
-            var names = engine.Cfg.LightControls.Select(c => $"\"{c.Name}\"").ToList();
+            var names = engine.Cfg.Controls.Select(c => $"\"{c.Name}\"").ToList();
             Console.WriteLine(names.Count == 0
-                ? $"No light controls yet. Add them to {ConfigFile.Path}"
-                : $"Usage: jog-scroll learn-light NAME, where NAME is one of {string.Join(", ", names)}");
+                ? $"No controls yet. Add them to {ConfigFile.Path}"
+                : $"Usage: jog-scroll learn-control NAME, where NAME is one of {string.Join(", ", names)}");
             return 1;
         }
-        lights.OnLearned = c =>
+        controls.OnLearned = c =>
         {
             Console.WriteLine($"  ✓ {c.Name} = {c.Midi!.Description}");
             Console.WriteLine($"\nSaved to {ConfigFile.Path}\n");
             Environment.Exit(0);
         };
         Console.WriteLine($"Move the fader or knob for {control.Name} all the way down and up. It saves when you stop.");
-        using var input = new MidiInput(m => lights.Handle(m), engine.MatchesPort) { Verbose = false };
-        lights.StartLearning(control);
+        using var input = new MidiInput(m => controls.Handle(m), engine.MatchesPort) { Verbose = false };
+        controls.StartLearning(control);
         Application.Run();
         return 0;
     }

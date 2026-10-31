@@ -11,7 +11,7 @@ sealed class TrayApp : ApplicationContext
     static readonly double[] SensitivityPresets = { 2, 3, 5, 8, 12, 20, 30, 60, 120 };
 
     readonly JogEngine engine = new(ConfigFile.Load());
-    readonly LightControls lights;
+    readonly ControlRouter controls;
     readonly MidiInput input;
     readonly NotifyIcon tray;
     readonly ContextMenuStrip menu = new();
@@ -19,8 +19,8 @@ sealed class TrayApp : ApplicationContext
     readonly System.Windows.Forms.Timer poll = new() { Interval = 2000 };
     DateTime? configDate = ConfigFile.Modified();
     JogEngine.LearnStep shownStep = JogEngine.LearnStep.None;
-    LightControl? shownLearning;
-    string? lightError;   // the last Hue Tray error shown, so a failing fader alerts only once
+    MidiControl? shownLearning;
+    readonly Dictionary<string, string?> serverErrors = new();   // the last error shown for each server, so it alerts only once
     bool wasConnected;
     bool quiet;   // no connection alerts while we change which devices are open ourselves
 
@@ -42,18 +42,18 @@ sealed class TrayApp : ApplicationContext
             configDate = ConfigFile.Modified();
             Notify("Learned ✓", $"Jog = {engine.Cfg.Jog!.Description}");
         };
-        lights = new LightControls(engine) { OnChange = Refresh };
-        lights.OnLearned = c =>
+        controls = new ControlRouter(engine) { OnChange = Refresh };
+        controls.OnLearned = c =>
         {
             configDate = ConfigFile.Modified();
             Notify("Learned ✓", $"{c.Name} = {c.Midi!.Description}");
         };
-        lights.OnResult = error =>
+        controls.OnResult = (server, error) =>
         {
-            if (error != null && error != lightError) Notify("Light controls", error);
-            lightError = error;
+            if (error != null && error != serverErrors.GetValueOrDefault(server)) Notify("Controls", error);
+            serverErrors[server] = error;
         };
-        input = new MidiInput(m => { if (engine.Step != JogEngine.LearnStep.None || !lights.Handle(m)) engine.Handle(m); },
+        input = new MidiInput(m => { if (engine.Step != JogEngine.LearnStep.None || !controls.Handle(m)) engine.Handle(m); },
                               WantDevice) { Verbose = false };
         wasConnected = DeviceConnected;   // no alert for the state at launch
         input.OnSourcesChanged = SourcesChanged;
@@ -79,7 +79,7 @@ sealed class TrayApp : ApplicationContext
     void PollConfig()
     {
         var date = ConfigFile.Modified();
-        if (date != configDate && engine.Step == JogEngine.LearnStep.None && lights.Learning == null)
+        if (date != configDate && engine.Step == JogEngine.LearnStep.None && controls.Learning == null)
         {
             configDate = date;
             engine.Cfg = ConfigFile.Load();
@@ -125,10 +125,10 @@ sealed class TrayApp : ApplicationContext
             }
             Reconnect();
         }
-        if (lights.Learning != shownLearning)
+        if (controls.Learning != shownLearning)
         {
-            shownLearning = lights.Learning;
-            if (shownLearning != null) Notify("Learn Light Control", $"Move the fader or knob for {shownLearning.Name} all the way down and up. It saves when you stop.");
+            shownLearning = controls.Learning;
+            if (shownLearning != null) Notify("Learn Control", $"Move the fader or knob for {shownLearning.Name} all the way down and up. It saves when you stop.");
         }
 
         bool dim = !engine.Enabled || !DeviceConnected;
@@ -144,7 +144,7 @@ sealed class TrayApp : ApplicationContext
             case JogEngine.LearnStep.Touch: return "Touch the jog top";
             case JogEngine.LearnStep.Spin: return "Now spin the jog edge";
         }
-        if (lights.Learning is { } learning) return $"Move the control for {learning.Name}";
+        if (controls.Learning is { } learning) return $"Move the control for {learning.Name}";
         if (!engine.IsConfigured) return "Jog wheel not learned yet";
         if (DeviceConnected) return engine.Enabled ? $"Connected: {engine.Cfg.PortName}" : "Paused";
         if (DeviceBusy) return $"{DeviceLabel} is in use by another program";
@@ -154,7 +154,7 @@ sealed class TrayApp : ApplicationContext
     void BuildMenu()
     {
         menu.Items.Clear();
-        bool isLearning = engine.Step != JogEngine.LearnStep.None || lights.Learning != null;
+        bool isLearning = engine.Step != JogEngine.LearnStep.None || controls.Learning != null;
         string status = isLearning ? "Learning: " + Status()
             : DeviceConnected ? $"Connected: {engine.Cfg.PortName}" : Status();
         menu.Items.Add(new ToolStripMenuItem(status) { Enabled = false });
@@ -170,14 +170,14 @@ sealed class TrayApp : ApplicationContext
         if (!isLearning)
         {
             menu.Items.Add(Item("Learn Jog Wheel…", false, engine.StartLearning));
-            menu.Items.Add(LightControlsMenu());
+            menu.Items.Add(ControlsMenu());
         }
         else
         {
             menu.Items.Add(Item("Cancel Learning", false, () =>
             {
                 engine.CancelLearning();
-                lights.CancelLearning();
+                controls.CancelLearning();
                 engine.Cfg = ConfigFile.Load();
                 Reconnect();
                 Refresh();
@@ -203,15 +203,15 @@ sealed class TrayApp : ApplicationContext
         return parent;
     }
 
-    ToolStripMenuItem LightControlsMenu()
+    ToolStripMenuItem ControlsMenu()
     {
-        var parent = new ToolStripMenuItem("Light Controls");
-        foreach (var control in engine.Cfg.LightControls)
+        var parent = new ToolStripMenuItem("Controls");
+        foreach (var control in engine.Cfg.Controls)
         {
             string learned = control.Midi is { } midi ? midi.Description : "not learned yet";
-            parent.DropDownItems.Add(Item($"Learn {control.Name}… ({learned})", false, () => lights.StartLearning(control)));
+            parent.DropDownItems.Add(Item($"Learn {control.Name}… ({learned})", false, () => controls.StartLearning(control)));
         }
-        if (engine.Cfg.LightControls.Count == 0)
+        if (engine.Cfg.Controls.Count == 0)
             parent.DropDownItems.Add(new ToolStripMenuItem("None yet: add them in the settings file") { Enabled = false });
         return parent;
     }

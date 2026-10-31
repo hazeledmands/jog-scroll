@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 
 namespace JogScroll;
@@ -37,27 +38,44 @@ public sealed class Config
     public bool Invert { get; set; }                         // flip scroll direction
     public int CenterThreshold { get; set; } = 50;           // Bome: values below this are clockwise
     public bool ConnectionAlerts { get; set; } = true;       // notify when the controller is plugged in or out
-    public List<LightControl> LightControls { get; set; } = new();   // faders and knobs that dim lights through Hue Tray
+    public Dictionary<string, ServerConfig> Servers { get; set; } = new();   // where controls send their changes, by name
+    public List<MidiControl> Controls { get; set; } = new();                 // faders and knobs, and what each one changes
 }
 
-/// A fader or knob that sets a Hue Tray setting on some lights, from its position.
-public sealed class LightControl
+/// A server that controls send changes to. Its url and headers can use ${file:PATH#key} and ${env:NAME}.
+public sealed class ServerConfig
+{
+    public string Type { get; set; } = "http";               // the only kind so far
+    public string Url { get; set; } = "";                    // action paths are added to this
+    public Dictionary<string, string> Headers { get; set; } = new();
+}
+
+/// A fader or knob, and the changes its position sends.
+public sealed class MidiControl
 {
     public string Name { get; set; } = "";
-    public MidiMatch? Midi { get; set; }                     // learned from the menu or `jog-scroll learn-light`
+    public MidiMatch? Midi { get; set; }                     // learned from the menu or `jog-scroll learn-control`
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public byte? Fine { get; set; }                          // for a high-resolution fader: the CC with its fine value
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public int? Low { get; set; }                            // the lowest and highest values it sends, found while learning
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public int? High { get; set; }
-    public List<string> Targets { get; set; } = new();       // Hue Tray paths: "lights/Desk", "rooms/Office", "zones/…", "home"
-    public string Set { get; set; } = "brightness";          // "brightness" (percent) or "colorTemp" (kelvin)
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public double? Min { get; set; }                         // value at the bottom; default 0 % or 2000 K
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public double? Max { get; set; }                         // value at the top; default 100 % or 6500 K
     public bool Invert { get; set; }                         // for controls whose top sends the lowest value
+    public List<ControlAction> Actions { get; set; } = new();
+}
+
+/// One request a control sends when it moves. "$value" in the path or body is the control's position,
+/// scaled to Range: a body string that's exactly "$value" becomes a number.
+public sealed class ControlAction
+{
+    public string Server { get; set; } = "";
+    public string Method { get; set; } = "POST";
+    public string Path { get; set; } = "";
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public JsonNode? Body { get; set; }
+    public double[] Range { get; set; } = { 0, 1 };         // the value at the bottom and at the top
+    public int Decimals { get; set; }
 }
 
 public static class ConfigFile
