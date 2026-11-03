@@ -8,9 +8,9 @@ How it behaves:
 - While you hold Shift on your keyboard, the jog scrolls sideways instead. Turning it the way that normally scrolls up scrolls left.
 - It notices the controller being plugged in or unplugged, and can show a notification when that happens.
 
-## Controls (Windows)
+## Controls
 
-On Windows, the jog wheel is one of the **controls** in the settings: things on the controller, and what each one does when it moves. A jog wheel scrolls, and it can be joined by faders and knobs that send their position to other programs as HTTP requests: to dim lights through [Hue Tray](https://github.com/hazeledmands/huetray), for example. Each program is a server in `servers`, and each control is an entry in `controls` with a list of `actions`:
+The jog wheel is one of the **controls** in the settings: things on the controller, and what each one does when it moves. A jog wheel scrolls, and it can be joined by faders and knobs that send their position to other programs as HTTP requests: to dim lights through [Hue Tray](https://github.com/hazeledmands/huetray), for example. Each program is a server in `servers`, and each control is an entry in `controls` with a list of `actions`:
 
 ```json
 "servers": {
@@ -36,9 +36,11 @@ On Windows, the jog wheel is one of the **controls** in the settings: things on 
 ]
 ```
 
+That's for Windows. On macOS, Hue Tray's settings are in `~/Library/Application Support/hue-tray/config.json`, and the jog's scroll action uses `"pixelsPerTick": 4` instead of `wheelUnitsPerTick`.
+
 Then teach it which jog, fader or knob to use: **Controls** in the menu, or `jog-scroll learn-control NAME`. For a jog wheel, touch its top and then spin it by its edge. For a fader or knob, move it all the way down and up, and it saves once you stop. It records the range the control covered, so each end of the control is each end of `range`.
 
-**Learn Jog Wheel…** and `jog-scroll learn` teach it the first jog wheel in `controls`, and add one if there isn't one. The menu's **Invert Direction** and **Sensitivity** are for the jog wheels that scroll, in a submenu for each if there's more than one. Settings from before the jog wheel was a control (`touch`, `jog`, `wheelUnitsPerTick` and so on) are moved into one the first time it runs.
+**Learn Jog Wheel…** and `jog-scroll learn` teach it the first jog wheel in `controls`, and add one if there isn't one. The menu's **Invert Direction** and **Sensitivity** are for the jog wheels that scroll, in a submenu for each if there's more than one. Settings from before the jog wheel was a control (`touch`, `jog`, `wheelUnitsPerTick` or `pixelsPerTick`, and so on) are moved into one the first time it runs.
 
 A server:
 
@@ -48,7 +50,7 @@ A server:
 | `url` | | the start of every request's URL |
 | `headers` | | headers sent with every request |
 
-`url` and `headers` can include `${file:PATH#key}`, a top-level value from a JSON file, and `${env:NAME}`, an environment variable. The example uses this to read Hue Tray's port and token from Hue Tray's own settings, so there's nothing to copy across. Environment variables in `PATH`, like `%APPDATA%`, are expanded.
+`url` and `headers` can include `${file:PATH#key}`, a top-level value from a JSON file, and `${env:NAME}`, an environment variable. The example uses this to read Hue Tray's port and token from Hue Tray's own settings, so there's nothing to copy across. Environment variables in `PATH` are expanded: `%APPDATA%` on Windows, and `~` or `$HOME` on macOS. On macOS, the menu bar app only sees the environment variables that launchd gives it, so `${env:NAME}` works best from `jog-scroll run`.
 
 A control:
 
@@ -68,7 +70,8 @@ An action that scrolls, for a jog wheel:
 | key | default | meaning |
 |---|---|---|
 | `type` | | `scroll` |
-| `wheelUnitsPerTick` | 5 | scroll distance per jog tick, in wheel units (120 = one mouse-wheel notch) |
+| `wheelUnitsPerTick` (Windows) | 5 | scroll distance per jog tick, in wheel units (120 = one mouse-wheel notch) |
+| `pixelsPerTick` (macOS) | 4 | scroll distance per jog tick, in pixels; decimals like `2.5` work |
 
 An action that sends a request, for a fader or knob:
 
@@ -127,7 +130,7 @@ Requests to the same method and path go one at a time. If the control moves whil
 | macOS | a menu bar app | [macos/README.md](macos/README.md) |
 | Windows | a notification-area (tray) app | [windows/README.md](windows/README.md) |
 
-On both, the first run asks you to teach it your jog wheel: touch the top of the jog, then spin it by its edge. The icon's menu has the same items on both: Scrolling On, Invert Direction, Sensitivity, Connection Alerts, Learn Jog Wheel…, Open Settings File, Start at Login and Quit.
+On both, the first run asks you to teach it your jog wheel: touch the top of the jog, then spin it by its edge. The icon's menu has the same items on both: Scrolling On, Invert Direction, Sensitivity, Connection Alerts, Learn Jog Wheel…, Controls, Open Settings File, Start at Login and Quit.
 
 ## Settings
 
@@ -137,20 +140,13 @@ Settings are in `config.json`, and changes take effect within a couple of second
 |---|---|---|
 | `portName` | Reloop Ready | MIDI input to listen to (part of its name is enough) |
 | `connectionAlerts` | true | notify when the controller connects or disconnects |
-| `outputPortName` (Windows) | | the MIDI output for the controller's lights, if it isn't `portName` with "In" changed to "Out" |
+| `outputPortName` | | the MIDI output for the controller's lights, if it isn't `portName` with "In" changed to "Out" |
 
-On Windows, the jog wheel's settings are in its control: see [Controls](#controls-windows). On macOS, they're at the top level:
-
-| key | default | meaning |
-|---|---|---|
-| `touchMultiplier` | 10 | speed-up while the jog top is touched |
-| `touchHoldSeconds` | 1.0 | how long the speed-up lasts after letting go |
-| `pixelsPerTick` | 4 | scroll distance per jog tick, in pixels; decimals like `2.5` work |
-| `invert` | false | flip the scroll direction |
+The jog wheel's settings are in its control: see [Controls](#controls). Scrolling is measured differently on each platform (pixels on macOS, wheel units on Windows), so a scroll action's sensitivity key differs between the two settings files.
 
 ## Terminal commands
 
-Both versions have the same commands: `jog-scroll run` (scroll without the icon, logging to the terminal), `learn`, `monitor` (print every incoming MIDI message, for troubleshooting) and `login on` / `login off`. Each platform's README says where the program is.
+Both versions have the same commands: `jog-scroll run` (scroll without the icon, logging to the terminal), `learn`, `learn-control NAME`, `monitor` (print every incoming MIDI message, for troubleshooting) and `login on` / `login off`. Each platform's README says where the program is.
 
 ## Repository layout
 
@@ -158,4 +154,4 @@ Both versions have the same commands: `jog-scroll run` (scroll without the icon,
 - `windows/`: the C#/.NET app and its build and install scripts
 - `icon/`: the app icon, shared by both. `make-icon.swift` draws it, and `make-ico.ps1` converts it for Windows.
 
-The two versions share no code, so the scrolling rules above are written twice: `JogEngine` in `macos/main.swift`, and in `windows/Jog.cs` (the jog wheel) and `ScrollOutput` in `windows/Outputs.cs` (the scrolling). When you change how scrolling behaves, change both and update this README. Controls are Windows-only so far, so the two versions' settings files differ.
+The two versions share no code, so the rules above are written twice, in files with the same names: `Config`, `Controls`, `Jog`, `Fader` and `Outputs` (`.swift` in `macos/`, `.cs` in `windows/`). When you change how a control behaves, change both and update this README.

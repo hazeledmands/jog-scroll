@@ -1,5 +1,5 @@
 #!/bin/sh
-# Builds ../build/macos/JogScroll.app from main.swift. Needs Apple's Command Line Tools (xcode-select --install).
+# Builds ../build/macos/JogScroll.app from the Swift files here. Needs Apple's Command Line Tools (xcode-select --install).
 set -e
 cd "$(dirname "$0")"
 
@@ -8,7 +8,7 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp ../icon/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"   # regenerate with: swift icon/make-icon.swift
 
-swiftc -O -o "$APP/Contents/MacOS/jog-scroll" main.swift \
+swiftc -O -o "$APP/Contents/MacOS/jog-scroll" *.swift \
     -framework AppKit -framework CoreMIDI -framework ApplicationServices -framework UserNotifications
 
 cat > "$APP/Contents/Info.plist" <<'EOF'

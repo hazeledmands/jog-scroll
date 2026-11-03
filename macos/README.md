@@ -23,7 +23,8 @@ If scrolling stops after a rebuild, check that the signing certificate exists. T
 
 - The dial icon is dimmed while the controller is unplugged, scrolling is paused, or Accessibility permission is missing.
 - While fast mode is on, the dial turns filled.
-- While you're teaching it the jog wheel, the prompts ("Touch the jog top", "Now spin the jog edge") show next to the icon.
+- While you're teaching it the jog wheel or another control, the prompts ("Touch the jog top", "Now spin the jog edge", "Move the control for…") show next to the icon.
+- When a control's request fails (its server isn't running, say), a notification says why, once until it next works.
 - **Connection Alerts** shows a notification when the controller is plugged in or unplugged. To turn the sound off but keep the alerts, go to System Settings → Notifications → Jog Scroll. macOS hides notifications while your screen is mirrored or shared, unless **Allow notifications when mirroring or sharing the display** is on in that same settings pane.
 - **Open Settings File** opens `config.json` in TextEdit.
 
@@ -33,6 +34,7 @@ Run these as `~/Applications/JogScroll.app/Contents/MacOS/jog-scroll <command>`:
 
 - `run`: scroll without the menu bar icon, logging to the terminal
 - `learn`: teach it the jog wheel
+- `learn-control NAME`: teach it the jog wheel, fader or knob for a control
 - `monitor`: print every incoming MIDI message, for troubleshooting
 - `login on` / `login off`: start, or stop starting, at login
 
