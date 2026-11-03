@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
@@ -9,6 +10,7 @@ public sealed record MidiMatch
     public byte Status { get; init; }   // status byte including channel, e.g. 0x90 = note on ch 1
     public byte Data1 { get; init; }    // note / controller number (0 for pitch bend, which has none)
 
+    [JsonIgnore]
     public string Description
     {
         get
@@ -140,6 +142,7 @@ public sealed class ControlAction
 
     // Scrolling
     public double? WheelUnitsPerTick { get; set; }           // 120 = one mouse-wheel notch; fractions accumulate
+    public double? PixelsPerTick { get; set; }               // the macOS version's setting, kept so a synced file doesn't lose it
 
     [JsonIgnore] public bool IsScroll => string.Equals(Type, "scroll", StringComparison.OrdinalIgnoreCase);
 }
@@ -163,8 +166,10 @@ public static class ConfigFile
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         PropertyNameCaseInsensitive = true,
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-        WriteIndented = true,
     };
+
+    /// Why the settings file couldn't be read the last time it was loaded, or null.
+    public static string? LoadError { get; private set; }
 
     static string MakePath()
     {
@@ -173,19 +178,118 @@ public static class ConfigFile
         return System.IO.Path.Combine(dir, "config.json");
     }
 
+    /// Loads the settings, or the defaults if there's no settings file. If there's one that can't be read, it
+    /// returns the defaults and sets LoadError, and Save won't write over it.
     public static Config Load()
     {
-        Config cfg;
-        try { cfg = JsonSerializer.Deserialize<Config>(File.ReadAllText(Path), options) ?? new Config(); }
-        catch { return new Config(); }
+        LoadError = null;
+        if (!File.Exists(Path)) return new Config();
+        var cfg = Read(out var error);
+        if (cfg == null)
+        {
+            LoadError = error;
+            return new Config();
+        }
         if (cfg.Migrate()) Save(cfg);
         return cfg;
     }
 
+    static Config? Read(out string? error)
+    {
+        error = null;
+        try { return JsonSerializer.Deserialize<Config>(File.ReadAllText(Path), options) ?? new Config(); }
+        catch (Exception e) when (e is JsonException or IOException or UnauthorizedAccessException or NotSupportedException or InvalidOperationException)
+        {
+            error = e.Message;
+            return null;
+        }
+    }
+
+    /// Saves the settings, unless the file there can't be read. That's usually a hand edit with a typo, and
+    /// writing over it would lose it: everywhere, if the file is synced to other computers.
     public static void Save(Config cfg)
     {
-        try { File.WriteAllText(Path, JsonSerializer.Serialize(cfg, options)); }
+        if (File.Exists(Path) && Read(out _) == null) return;
+        try { File.WriteAllText(Path, Serialize(cfg)); }
         catch (IOException) { }
+    }
+
+    /// The settings as JSON, written exactly as the macOS version writes them (canonicalJSON in macos/Config.swift),
+    /// so a file synced between the two only changes where a setting did: keys in ordinal order, two-space indents,
+    /// "key": value, \n line endings, and only the characters JSON requires escaped.
+    public static string Serialize(Config cfg)
+    {
+        var text = new StringBuilder();
+        Write(JsonSerializer.SerializeToNode(cfg, options), "", text);
+        return text.Append('\n').ToString();
+    }
+
+    static void Write(JsonNode? node, string indent, StringBuilder text)
+    {
+        string inner = indent + "  ";
+        switch (node)
+        {
+            case null:
+                text.Append("null");
+                break;
+            case JsonObject o when o.Count == 0:
+                text.Append("{}");
+                break;
+            case JsonObject o:
+                text.Append("{\n");
+                bool first = true;
+                foreach (var (key, value) in o.OrderBy(p => p.Key, StringComparer.Ordinal))
+                {
+                    if (!first) text.Append(",\n");
+                    first = false;
+                    text.Append(inner);
+                    Quote(key, text);
+                    text.Append(": ");
+                    Write(value, inner, text);
+                }
+                text.Append('\n').Append(indent).Append('}');
+                break;
+            case JsonArray a when a.Count == 0:
+                text.Append("[]");
+                break;
+            case JsonArray a:
+                text.Append("[\n");
+                for (int i = 0; i < a.Count; i++)
+                {
+                    if (i > 0) text.Append(",\n");
+                    text.Append(inner);
+                    Write(a[i], inner, text);
+                }
+                text.Append('\n').Append(indent).Append(']');
+                break;
+            case JsonValue v when v.GetValueKind() == JsonValueKind.String:
+                Quote(v.GetValue<string>(), text);
+                break;
+            default:
+                text.Append(node.ToJsonString());   // numbers in their shortest form, true, false
+                break;
+        }
+    }
+
+    static void Quote(string s, StringBuilder text)
+    {
+        text.Append('"');
+        foreach (char c in s)
+        {
+            switch (c)
+            {
+                case '"': text.Append("\\\""); break;
+                case '\\': text.Append("\\\\"); break;
+                case '\n': text.Append("\\n"); break;
+                case '\r': text.Append("\\r"); break;
+                case '\t': text.Append("\\t"); break;
+                case '\b': text.Append("\\b"); break;
+                case '\f': text.Append("\\f"); break;
+                case < ' ': text.Append($"\\u{(int)c:X4}"); break;
+                default: text.Append(c); break;
+            }
+        }
+        text.Append('"');
     }
 
     public static DateTime? Modified() => File.Exists(Path) ? File.GetLastWriteTimeUtc(Path) : null;

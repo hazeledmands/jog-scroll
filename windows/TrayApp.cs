@@ -37,6 +37,7 @@ sealed class TrayApp : ApplicationContext
 
         controls = new ControlRouter(ConfigFile.Load()) { OnChange = Refresh };
         configDate = ConfigFile.Modified();
+        ReportLoadError();
         controls.OnLearned = c =>
         {
             configDate = ConfigFile.Modified();
@@ -56,8 +57,15 @@ sealed class TrayApp : ApplicationContext
         poll.Start();
 
         tray.Visible = true;
-        if (!controls.IsConfigured) controls.StartLearning(controls.MainJogToLearn());
+        if (!controls.IsConfigured && ConfigFile.LoadError == null) controls.StartLearning(controls.MainJogToLearn());
         Refresh();
+    }
+
+    /// Says so if the settings file couldn't be read. Until it's fixed, Jog Scroll runs on the defaults and won't save over it.
+    void ReportLoadError()
+    {
+        if (ConfigFile.LoadError is { } error)
+            Notify("The settings file has an error", $"Jog Scroll won't change it until it's fixed. {error}");
     }
 
     // Learning a jog wheel listens to every input to find the controller. Otherwise open only the controller,
@@ -76,6 +84,7 @@ sealed class TrayApp : ApplicationContext
         {
             controls.Cfg = ConfigFile.Load();
             configDate = ConfigFile.Modified();   // after Load, which saves when it updates old settings
+            ReportLoadError();
             Reconnect();
         }
         Refresh();   // also redraws the icon if the taskbar switched between light and dark
@@ -128,6 +137,7 @@ sealed class TrayApp : ApplicationContext
     string Status()
     {
         if (controls.ShortLearnPrompt is { } prompt) return prompt;
+        if (ConfigFile.LoadError != null) return "The settings file has an error";
         if (!controls.IsConfigured) return "Jog wheel not learned yet";
         if (DeviceConnected) return controls.ScrollingEnabled ? $"Connected: {controls.Cfg.PortName}" : "Paused";
         if (DeviceBusy) return $"{DeviceLabel} is in use by another program";

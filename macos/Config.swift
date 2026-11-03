@@ -203,6 +203,7 @@ final class ControlAction: Codable {
 
     // Scrolling
     var pixelsPerTick: Double?                // scroll distance per jog tick; fractions accumulate
+    var wheelUnitsPerTick: Double?            // the Windows version's setting, kept so a synced file doesn't lose it
 
     init() {}
 
@@ -233,17 +234,90 @@ let configURL: URL = {
     return dir.appendingPathComponent("config.json")
 }()
 
+/// Why the settings file couldn't be read the last time it was loaded, or nil.
+var configLoadError: String?
+
+/// Loads the settings, or the defaults if there's no settings file. If there's one that can't be read, it
+/// returns the defaults and sets configLoadError, and saveConfig won't write over it.
 func loadConfig() -> Config {
-    guard let data = try? Data(contentsOf: configURL),
-          let cfg = try? JSONDecoder().decode(Config.self, from: data) else { return Config() }
-    if cfg.migrate() { saveConfig(cfg) }
-    return cfg
+    configLoadError = nil
+    guard FileManager.default.fileExists(atPath: configURL.path) else { return Config() }
+    switch readConfig() {
+    case .success(let cfg):
+        if cfg.migrate() { saveConfig(cfg) }
+        return cfg
+    case .failure(let error):
+        configLoadError = describe(error)
+        return Config()
+    }
 }
 
+private func readConfig() -> Result<Config, Error> {
+    Result { try JSONDecoder().decode(Config.self, from: try Data(contentsOf: configURL)) }
+}
+
+private func describe(_ error: Error) -> String {
+    switch error {
+    case DecodingError.dataCorrupted(let context): return context.underlyingError.map { "\($0.localizedDescription)" } ?? context.debugDescription
+    case DecodingError.typeMismatch(_, let context), DecodingError.valueNotFound(_, let context), DecodingError.keyNotFound(_, let context):
+        let path = context.codingPath.map { $0.intValue.map(String.init) ?? $0.stringValue }.joined(separator: ".")
+        return path.isEmpty ? context.debugDescription : "\(path): \(context.debugDescription)"
+    default: return error.localizedDescription
+    }
+}
+
+/// Saves the settings, unless the file there can't be read. That's usually a hand edit with a typo, and
+/// writing over it would lose it: everywhere, if the file is synced to other computers.
 func saveConfig(_ cfg: Config) {
-    let enc = JSONEncoder()
-    enc.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-    if let data = try? enc.encode(cfg) { try? data.write(to: configURL) }
+    if FileManager.default.fileExists(atPath: configURL.path), case .failure = readConfig() { return }
+    guard let data = try? JSONEncoder().encode(cfg),
+          let json = try? JSONDecoder().decode(JSON.self, from: data) else { return }
+    try? Data(canonicalJSON(json).utf8).write(to: configURL)
+}
+
+/// JSON written exactly as the Windows version writes it (ConfigFile.Serialize in windows/Config.cs), so a file
+/// synced between the two only changes where a setting did: keys in ordinal order, two-space indents,
+/// `"key": value`, \n line endings, and only the characters JSON requires escaped.
+func canonicalJSON(_ value: JSON) -> String { writeJSON(value, indent: "") + "\n" }
+
+private func writeJSON(_ value: JSON, indent: String) -> String {
+    let inner = indent + "  "
+    switch value {
+    case .null: return "null"
+    case .bool(let b): return b ? "true" : "false"
+    case .number(let n):
+        // Whole numbers without ".0", like .NET. Others in the shortest form that reads back the same.
+        if n == n.rounded(), abs(n) < 1e15 { return String(Int64(n)) }
+        return "\(n)"
+    case .string(let s): return quoted(s)
+    case .array(let items):
+        if items.isEmpty { return "[]" }
+        return "[\n" + items.map { inner + writeJSON($0, indent: inner) }.joined(separator: ",\n") + "\n" + indent + "]"
+    case .object(let fields):
+        if fields.isEmpty { return "{}" }
+        // .NET's StringComparer.Ordinal compares UTF-16 code units.
+        let keys = fields.keys.sorted { $0.utf16.lexicographicallyPrecedes($1.utf16) }
+        return "{\n" + keys.map { inner + quoted($0) + ": " + writeJSON(fields[$0]!, indent: inner) }.joined(separator: ",\n") + "\n" + indent + "}"
+    }
+}
+
+private func quoted(_ s: String) -> String {
+    var out = "\""
+    for c in s.unicodeScalars {
+        switch c {
+        case "\"": out += "\\\""
+        case "\\": out += "\\\\"
+        case "\n": out += "\\n"
+        case "\r": out += "\\r"
+        case "\t": out += "\\t"
+        case "\u{8}": out += "\\b"
+        case "\u{C}": out += "\\f"
+        default:
+            if c.value < 0x20 { out += String(format: "\\u%04X", c.value) }
+            else { out.unicodeScalars.append(c) }
+        }
+    }
+    return out + "\""
 }
 
 func configModified() -> Date? {

@@ -109,7 +109,9 @@ sealed class JogLearner : Learner
         if (candidateCount < 5) return;
         Control.Touch = touch;
         Control.Midi = match;
-        Cfg.PortName = source;
+        // Keep a portName that already matches, such as "Reloop Ready". The full name differs between computers
+        // ("Reloop Ready In" on Windows), so a synced settings file needs the shorter one.
+        if (Cfg.PortName.Length > 0 && !source.Contains(Cfg.PortName, StringComparison.OrdinalIgnoreCase)) Cfg.PortName = source;
         Done?.Invoke();
     }
 }

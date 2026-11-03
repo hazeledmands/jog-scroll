@@ -88,7 +88,9 @@ final class JogLearner: Learner {
         guard candidateCount >= 5 else { return }
         control.touch = touch
         control.midi = match
-        cfg.portName = source
+        // Keep a portName that already matches, such as "Reloop Ready". The full name can differ between computers
+        // ("Reloop Ready In" on Windows), so a synced settings file needs the shorter one.
+        if !cfg.portName.isEmpty && !source.lowercased().contains(cfg.portName.lowercased()) { cfg.portName = source }
         done?()
     }
 }

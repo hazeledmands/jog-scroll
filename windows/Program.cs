@@ -24,6 +24,15 @@ static class Program
 #if CLI
         Console.OutputEncoding = System.Text.Encoding.UTF8;
         Console.CancelKeyPress += (_, _) => { Console.WriteLine("\nBye."); Environment.Exit(0); };
+        if (args.FirstOrDefault() is "run" or "learn" or "learn-control")
+        {
+            ConfigFile.Load();
+            if (ConfigFile.LoadError is { } error)
+            {
+                Console.WriteLine($"The settings file has an error, so Jog Scroll won't use or change it until it's fixed:\n  {error}\n  {ConfigFile.Path}");
+                return 1;
+            }
+        }
         switch (args.FirstOrDefault())
         {
             case "run": return RunScroller();

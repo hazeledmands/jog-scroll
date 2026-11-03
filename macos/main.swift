@@ -110,8 +110,16 @@ final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUserN
         // Every 2 s: notice Accessibility being granted, and pick up hand edits to config.json.
         Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in self?.poll() }
 
-        if !controls.isConfigured { controls.startLearning(controls.mainJogToLearn()) }
+        reportLoadError()
+        if !controls.isConfigured && configLoadError == nil { controls.startLearning(controls.mainJogToLearn()) }
         refresh()
+    }
+
+    /// Says so if the settings file couldn't be read. Until it's fixed, Jog Scroll runs on the defaults and won't save over it.
+    private func reportLoadError() {
+        if let configLoadError {
+            notify("The settings file has an error", "Jog Scroll won't change it until it's fixed. \(configLoadError)", id: "config")
+        }
     }
 
     private func poll() {
@@ -123,6 +131,7 @@ final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUserN
         if date != configDate && controls.learning == nil {
             controls.cfg = loadConfig()
             configDate = configModified()   // after loadConfig, which saves when it updates old settings
+            reportLoadError()
         }
     }
 
@@ -189,6 +198,7 @@ final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUserN
 
         let status: String
         if let learning = controls.learning { status = "Learning \(learning.name)" }
+        else if configLoadError != nil { status = "The settings file has an error" }
         else if !controls.isConfigured { status = "Jog wheel not learned yet" }
         else if deviceConnected { status = "Connected: \(controls.cfg.portName)" }
         else { status = "Waiting for \(controls.cfg.portName.isEmpty ? "a MIDI device" : controls.cfg.portName)…" }
@@ -415,6 +425,14 @@ signal(SIGINT) { _ in print("\nBye."); exit(0) }
 
 // Ignore launch arguments macOS itself may add (e.g. -psn_…).
 let arguments = CommandLine.arguments.dropFirst().filter { !$0.hasPrefix("-") }
+
+if ["run", "learn", "learn-control"].contains(arguments.first) {
+    _ = loadConfig()
+    if let configLoadError {
+        print("The settings file has an error, so Jog Scroll won't use or change it until it's fixed:\n  \(configLoadError)\n  \(configURL.path)")
+        exit(1)
+    }
+}
 
 switch arguments.first {
 case nil:       runApp()

@@ -136,6 +136,10 @@ On both, the first run asks you to teach it your jog wheel: touch the top of the
 
 Settings are in `config.json`, and changes take effect within a couple of seconds. It's in `~/Library/Application Support/jog-scroll/` on macOS and `%APPDATA%\jog-scroll\` on Windows.
 
+If the file can't be read, for example after a hand edit with a typo, Jog Scroll says so and runs on the defaults until it's fixed. It won't save over it.
+
+The file can be shared between computers, with Syncthing for example. Both versions write it the same way (keys in alphabetical order), so it only changes where a setting did, and each keeps the other's scroll sensitivity (`pixelsPerTick` on macOS, `wheelUnitsPerTick` on Windows). Set `portName` to the part of the controller's name that's the same everywhere, like `Reloop Ready`: learning the jog wheel keeps a `portName` that already matches. `${file:…}` paths differ between Windows and macOS, so in a shared file, write a server's address and token out in full.
+
 | key | default | meaning |
 |---|---|---|
 | `portName` | Reloop Ready | MIDI input to listen to (part of its name is enough) |
