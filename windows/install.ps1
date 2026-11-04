@@ -12,6 +12,13 @@ $dest = Join-Path $env:LOCALAPPDATA 'Programs\JogScroll'
 New-Item -ItemType Directory -Force -Path $dest | Out-Null
 Copy-Item (Join-Path $PSScriptRoot '..\build\windows\*.exe') $dest -Force
 
+# A Start menu shortcut, so it can be found and started from there.
+$shortcut = (New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path ([Environment]::GetFolderPath('Programs')) 'Jog Scroll.lnk'))
+$shortcut.TargetPath = Join-Path $dest 'JogScroll.exe'
+$shortcut.WorkingDirectory = $dest
+$shortcut.Description = 'Turns a DJ controller''s jog wheel into a scroll wheel'
+$shortcut.Save()
+
 & (Join-Path $dest 'jog-scroll.exe') login on
 Start-Process (Join-Path $dest 'JogScroll.exe')
 Write-Output "Installed $dest"

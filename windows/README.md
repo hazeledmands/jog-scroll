@@ -10,7 +10,7 @@ You'll need the .NET 8 SDK (`winget install Microsoft.DotNet.SDK.8`). From the r
 powershell -ExecutionPolicy Bypass -File windows\install.ps1
 ```
 
-This builds Jog Scroll (into `build\windows`), copies it to `%LOCALAPPDATA%\Programs\JogScroll`, sets it to start at login and launches it. Windows doesn't need an Accessibility permission. To build without installing, run `windows\build.ps1`.
+This builds Jog Scroll (into `build\windows`), copies it to `%LOCALAPPDATA%\Programs\JogScroll`, adds it to the Start menu, sets it to start at login and launches it. Windows doesn't need an Accessibility permission. To build without installing, run `windows\build.ps1`.
 
 Windows won't run these scripts from a WSL folder (`\\wsl.localhost\...`), so copy or clone the repo onto a Windows drive first.
 
