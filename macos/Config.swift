@@ -234,26 +234,55 @@ let configURL: URL = {
     return dir.appendingPathComponent("config.json")
 }()
 
-/// Why the settings file couldn't be read the last time it was loaded, or nil.
-var configLoadError: String?
+/// The settings are in two files: config.json, which can be synced between computers, and config.local.json
+/// beside it, for settings that stay on this computer. The local file is optional, and wins where they overlap:
+/// see mergeSettings.
+struct ConfigFiles {
+    var synced: URL
+    var local: URL
 
-/// Loads the settings, or the defaults if there's no settings file. If there's one that can't be read, it
-/// returns the defaults and sets configLoadError, and saveConfig won't write over it.
-func loadConfig() -> Config {
+    static let standard = ConfigFiles(synced: configURL,
+                                      local: configURL.deletingLastPathComponent().appendingPathComponent("config.local.json"))
+}
+
+/// Why a settings file couldn't be read the last time they were loaded, and which file, or nil.
+var configLoadError: String?
+var configLoadErrorFile: URL?
+
+/// Loads the settings, or the defaults if there's no settings file. If one of them can't be read, it returns
+/// the defaults and sets configLoadError, and saveConfig won't write over either of them.
+func loadConfig(_ files: ConfigFiles = .standard) -> Config {
     configLoadError = nil
-    guard FileManager.default.fileExists(atPath: configURL.path) else { return Config() }
-    switch readConfig() {
-    case .success(let cfg):
-        if cfg.migrate() { saveConfig(cfg) }
+    configLoadErrorFile = nil
+    switch readSettings(files) {
+    case .success(let (synced, local)):
+        guard let cfg = try? decodeConfig(mergeSettings(synced: synced ?? .object([:]), local: local)) else { return Config() }
+        if cfg.migrate() { saveConfig(cfg, files) }
         return cfg
-    case .failure(let error):
-        configLoadError = describe(error)
+    case .failure(let failure):
+        configLoadError = describe(failure.error)
+        configLoadErrorFile = failure.file
         return Config()
     }
 }
 
-private func readConfig() -> Result<Config, Error> {
-    Result { try JSONDecoder().decode(Config.self, from: try Data(contentsOf: configURL)) }
+private struct SettingsFileError: Error { var file: URL; var error: Error }
+
+/// Both files as JSON, or nil for one that isn't there, after checking that each can be read as settings.
+private func readSettings(_ files: ConfigFiles) -> Result<(synced: JSON?, local: JSON?), SettingsFileError> {
+    func read(_ url: URL) -> Result<JSON?, SettingsFileError> {
+        guard FileManager.default.fileExists(atPath: url.path) else { return .success(nil) }
+        return Result {
+            let data = try Data(contentsOf: url)
+            _ = try JSONDecoder().decode(Config.self, from: data)   // for errors that say which setting is wrong
+            return try JSONDecoder().decode(JSON.self, from: data)
+        }.mapError { SettingsFileError(file: url, error: $0) }
+    }
+    return read(files.synced).flatMap { synced in read(files.local).map { (synced, $0) } }
+}
+
+private func decodeConfig(_ json: JSON) throws -> Config {
+    try JSONDecoder().decode(Config.self, from: try JSONEncoder().encode(json))
 }
 
 private func describe(_ error: Error) -> String {
@@ -266,13 +295,94 @@ private func describe(_ error: Error) -> String {
     }
 }
 
-/// Saves the settings, unless the file there can't be read. That's usually a hand edit with a typo, and
-/// writing over it would lose it: everywhere, if the file is synced to other computers.
-func saveConfig(_ cfg: Config) {
-    if FileManager.default.fileExists(atPath: configURL.path), case .failure = readConfig() { return }
-    guard let data = try? JSONEncoder().encode(cfg),
-          let json = try? JSONDecoder().decode(JSON.self, from: data) else { return }
-    try? Data(canonicalJSON(json).utf8).write(to: configURL)
+/// Saves the settings, each to the file it came from, unless one of the files can't be read. That's usually a
+/// hand edit with a typo, and writing over it would lose it: everywhere, if the file is synced to other computers.
+/// The local file is only written if there is one.
+func saveConfig(_ cfg: Config, _ files: ConfigFiles = .standard) {
+    guard case .success(let (synced, local)) = readSettings(files),
+          let data = try? JSONEncoder().encode(cfg),
+          let merged = try? JSONDecoder().decode(JSON.self, from: data) else { return }
+    let (syncedOut, localOut) = splitSettings(merged, synced: synced ?? .object([:]), local: local)
+    try? Data(canonicalJSON(syncedOut).utf8).write(to: files.synced)
+    if let localOut { try? Data(canonicalJSON(localOut).utf8).write(to: files.local) }
+}
+
+/// The synced settings with the local ones over them. A setting in the local file wins. A server in the local file
+/// replaces the synced server with its name. A control in the local file replaces the synced control with its name,
+/// ignoring case, where that one is, and the rest go at the end. Nothing inside a server or control is merged.
+/// macos/Config.swift and windows/Config.cs do this the same way; change both together.
+func mergeSettings(synced: JSON, local: JSON?) -> JSON {
+    guard case .object(var merged) = synced, case .object(let local)? = local else { return synced }
+    for (key, value) in local {
+        switch (key, merged[key], value) {
+        case ("servers", .object(var servers)?, .object(let localServers)):
+            servers.merge(localServers) { _, new in new }
+            merged[key] = .object(servers)
+        case ("controls", .array(var controls)?, .array(let localControls)):
+            for control in localControls {
+                if let i = controls.firstIndex(where: { sameName($0, control) }) { controls[i] = control }
+                else { controls.append(control) }
+            }
+            merged[key] = .array(controls)
+        default:
+            merged[key] = value
+        }
+    }
+    return .object(merged)
+}
+
+/// Splits settings that mergeSettings made, perhaps changed since, back into the two files. `synced` and `local`
+/// are the files as they are now: the synced file keeps what the local file overrides, and everything else that's
+/// in the local file goes back to it. New settings, servers and controls go to the synced file.
+func splitSettings(_ merged: JSON, synced: JSON, local: JSON?) -> (synced: JSON, local: JSON?) {
+    guard case .object(let merged) = merged, case .object(let local)? = local else { return (merged, nil) }
+    let syncedFields: [String: JSON]
+    if case .object(let o) = synced { syncedFields = o } else { syncedFields = [:] }
+    var syncedOut: [String: JSON] = [:], localOut: [String: JSON] = [:]
+
+    for (key, value) in merged {
+        switch (key, value) {
+        case ("servers", .object(let servers)):
+            var localNames: Set<String> = []
+            if case .object(let s)? = local[key] { localNames = Set(s.keys) }
+            var mine: [String: JSON] = [:], theirs: [String: JSON] = [:]
+            if case .object(let s)? = syncedFields[key] { theirs = s.filter { localNames.contains($0.key) } }
+            for (name, server) in servers {
+                if localNames.contains(name) { mine[name] = server } else { theirs[name] = server }
+            }
+            if local[key] != nil { localOut[key] = .object(mine) }
+            if syncedFields[key] != nil || !theirs.isEmpty || local[key] == nil { syncedOut[key] = .object(theirs) }
+        case ("controls", .array(let controls)):
+            var localControls: [JSON] = []
+            if case .array(let c)? = local[key] { localControls = c }
+            var syncedControls: [JSON] = []
+            if case .array(let c)? = syncedFields[key] { syncedControls = c }
+            var mine: [(index: Int, control: JSON)] = [], theirs: [JSON] = []
+            for control in controls {
+                if let i = localControls.firstIndex(where: { sameName($0, control) }) {
+                    mine.append((i, control))
+                    if let overridden = syncedControls.first(where: { sameName($0, control) }) { theirs.append(overridden) }
+                } else {
+                    theirs.append(control)
+                }
+            }
+            if local[key] != nil { localOut[key] = .array(mine.sorted { $0.index < $1.index }.map(\.control)) }
+            if syncedFields[key] != nil || !theirs.isEmpty || local[key] == nil { syncedOut[key] = .array(theirs) }
+        default:
+            if local[key] != nil {
+                localOut[key] = value
+                if let overridden = syncedFields[key] { syncedOut[key] = overridden }
+            } else {
+                syncedOut[key] = value
+            }
+        }
+    }
+    return (.object(syncedOut), .object(localOut))
+}
+
+private func sameName(_ a: JSON, _ b: JSON) -> Bool {
+    guard case .string(let x)? = a["name"], case .string(let y)? = b["name"] else { return false }
+    return x.lowercased() == y.lowercased()
 }
 
 /// JSON written exactly as the Windows version writes it (ConfigFile.Serialize in windows/Config.cs), so a file
@@ -320,6 +430,7 @@ private func quoted(_ s: String) -> String {
     return out + "\""
 }
 
-func configModified() -> Date? {
-    (try? FileManager.default.attributesOfItem(atPath: configURL.path))?[.modificationDate] as? Date
+/// When each settings file last changed, to notice edits to either.
+func configModified(_ files: ConfigFiles = .standard) -> [Date?] {
+    [files.synced, files.local].map { (try? FileManager.default.attributesOfItem(atPath: $0.path))?[.modificationDate] as? Date }
 }

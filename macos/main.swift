@@ -118,7 +118,7 @@ final class MenuBarApp: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUserN
     /// Says so if the settings file couldn't be read. Until it's fixed, Jog Scroll runs on the defaults and won't save over it.
     private func reportLoadError() {
         if let configLoadError {
-            notify("The settings file has an error", "Jog Scroll won't change it until it's fixed. \(configLoadError)", id: "config")
+            notify("\((configLoadErrorFile ?? configURL).lastPathComponent) has an error", "Jog Scroll won't change it until it's fixed. \(configLoadError)", id: "config")
         }
     }
 
@@ -409,7 +409,7 @@ func learn(_ controls: ControlRouter, _ control: MidiControl) -> Never {
         print("  ✓ \(c.name) = \(c.midi!.description)")
         if let touch = c.touch { print("  ✓ Touch = \(touch.description)") }
         if c.isJog { print("  ✓ Device = \(controls.cfg.portName)") }
-        print("\nSaved to \(configURL.path)\n")
+        print("\nSaved to the settings in \(configURL.deletingLastPathComponent().path)\n")
         exit(0)
     }
     let input = MidiInput { m in controls.handle(m) }
@@ -429,7 +429,7 @@ let arguments = CommandLine.arguments.dropFirst().filter { !$0.hasPrefix("-") }
 if ["run", "learn", "learn-control"].contains(arguments.first) {
     _ = loadConfig()
     if let configLoadError {
-        print("The settings file has an error, so Jog Scroll won't use or change it until it's fixed:\n  \(configLoadError)\n  \(configURL.path)")
+        print("The settings file has an error, so Jog Scroll won't use or change it until it's fixed:\n  \(configLoadError)\n  \((configLoadErrorFile ?? configURL).path)")
         exit(1)
     }
 }
@@ -456,7 +456,7 @@ default:
       jog-scroll learn-control NAME  record which jog wheel, fader or knob the control NAME uses
       jog-scroll monitor      print every incoming MIDI message
       jog-scroll login on|off start (or stop starting) the menu bar app at login
-    Settings: \(configURL.path)
+    Settings: \(configURL.path), and \(ConfigFiles.standard.local.lastPathComponent) beside it for settings that stay on this computer
     """)
     exit(1)
 }

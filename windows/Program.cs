@@ -29,7 +29,7 @@ static class Program
             ConfigFile.Load();
             if (ConfigFile.LoadError is { } error)
             {
-                Console.WriteLine($"The settings file has an error, so Jog Scroll won't use or change it until it's fixed:\n  {error}\n  {ConfigFile.Path}");
+                Console.WriteLine($"The settings file has an error, so Jog Scroll won't use or change it until it's fixed:\n  {error}\n  {ConfigFile.LoadErrorPath ?? ConfigFile.Path}");
                 return 1;
             }
         }
@@ -53,7 +53,7 @@ static class Program
                       jog-scroll monitor      print every incoming MIDI message
                       jog-scroll login on|off start (or stop starting) the tray app at login
                     The tray app is JogScroll.exe.
-                    Settings: {ConfigFile.Path}
+                    Settings: {ConfigFile.Path}, and {System.IO.Path.GetFileName(ConfigFile.Standard.Local)} beside it for settings that stay on this computer
                     """);
                 return 1;
         }
@@ -136,7 +136,7 @@ static class Program
             Console.WriteLine($"  ✓ {c.Name} = {c.Midi!.Description}");
             if (c.Touch is { } touch) Console.WriteLine($"  ✓ Touch = {touch.Description}");
             if (c.IsJog) Console.WriteLine($"  ✓ Device = {controls.Cfg.PortName}");
-            Console.WriteLine($"\nSaved to {ConfigFile.Path}\n");
+            Console.WriteLine($"\nSaved to the settings in {System.IO.Path.GetDirectoryName(ConfigFile.Path)}\n");
             Environment.Exit(0);
         };
         controls.StartLearning(control);

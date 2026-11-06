@@ -19,6 +19,12 @@
     <DebugType>embedded</DebugType>
   </PropertyGroup>
 
+  <!-- The tests are their own project: dotnet test Tests -->
+  <ItemGroup>
+    <Compile Remove="Tests\**" />
+    <None Remove="Tests\**" />
+  </ItemGroup>
+
   <PropertyGroup Condition="'$(OutputType)' == 'Exe'">
     <DefineConstants>$(DefineConstants);CLI</DefineConstants>
   </PropertyGroup>
