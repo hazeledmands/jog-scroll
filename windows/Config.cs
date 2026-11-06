@@ -157,9 +157,15 @@ public sealed class ShowConfig
     public double Seconds { get; set; } = 1;                 // how long they stay lit after the last change
 }
 
+/// The settings are in two files: config.json, which can be synced between computers, and config.local.json
+/// beside it, for settings that stay on this computer. The local file is optional, and wins where they overlap:
+/// see ConfigFile.MergeSettings.
+public sealed record ConfigFiles(string Synced, string Local);
+
 public static class ConfigFile
 {
     public static readonly string Path = MakePath();
+    public static readonly ConfigFiles Standard = new(Path, System.IO.Path.Combine(System.IO.Path.GetDirectoryName(Path)!, "config.local.json"));
 
     static readonly JsonSerializerOptions options = new()
     {
@@ -168,8 +174,9 @@ public static class ConfigFile
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     };
 
-    /// Why the settings file couldn't be read the last time it was loaded, or null.
+    /// Why a settings file couldn't be read the last time they were loaded, and which file, or null.
     public static string? LoadError { get; private set; }
+    public static string? LoadErrorPath { get; private set; }
 
     static string MakePath()
     {
@@ -178,49 +185,181 @@ public static class ConfigFile
         return System.IO.Path.Combine(dir, "config.json");
     }
 
-    /// Loads the settings, or the defaults if there's no settings file. If there's one that can't be read, it
-    /// returns the defaults and sets LoadError, and Save won't write over it.
-    public static Config Load()
+    /// Loads the settings, or the defaults if there's no settings file. If one of them can't be read, it returns
+    /// the defaults and sets LoadError, and Save won't write over either of them.
+    public static Config Load(ConfigFiles? files = null)
     {
-        LoadError = null;
-        if (!File.Exists(Path)) return new Config();
-        var cfg = Read(out var error);
-        if (cfg == null)
+        files ??= Standard;
+        LoadError = LoadErrorPath = null;
+        if (!ReadBoth(files, out var synced, out var local, out var error, out var errorPath))
         {
             LoadError = error;
+            LoadErrorPath = errorPath;
             return new Config();
         }
-        if (cfg.Migrate()) Save(cfg);
+        var cfg = MergeSettings(synced ?? new JsonObject(), local).Deserialize<Config>(options) ?? new Config();
+        if (cfg.Migrate()) Save(cfg, files);
         return cfg;
     }
 
-    static Config? Read(out string? error)
+    /// Both files as JSON, or null for one that isn't there, after checking that each can be read as settings.
+    static bool ReadBoth(ConfigFiles files, out JsonNode? synced, out JsonNode? local, out string? error, out string? errorPath)
     {
+        local = null;
+        errorPath = files.Synced;
+        if (!Read(files.Synced, out synced, out error)) return false;
+        errorPath = files.Local;
+        if (!Read(files.Local, out local, out error)) return false;
+        errorPath = null;
+        return true;
+    }
+
+    static bool Read(string path, out JsonNode? json, out string? error)
+    {
+        json = null;
         error = null;
-        try { return JsonSerializer.Deserialize<Config>(File.ReadAllText(Path), options) ?? new Config(); }
+        if (!File.Exists(path)) return true;
+        try
+        {
+            var text = File.ReadAllText(path);
+            _ = JsonSerializer.Deserialize<Config>(text, options);   // for errors that say which setting is wrong
+            json = JsonNode.Parse(text) as JsonObject ?? throw new JsonException("The settings need to be a JSON object.");
+            return true;
+        }
         catch (Exception e) when (e is JsonException or IOException or UnauthorizedAccessException or NotSupportedException or InvalidOperationException)
         {
             error = e.Message;
-            return null;
+            return false;
         }
     }
 
-    /// Saves the settings, unless the file there can't be read. That's usually a hand edit with a typo, and
-    /// writing over it would lose it: everywhere, if the file is synced to other computers.
-    public static void Save(Config cfg)
+    /// Saves the settings, each to the file it came from, unless one of the files can't be read. That's usually a
+    /// hand edit with a typo, and writing over it would lose it: everywhere, if the file is synced to other computers.
+    /// The local file is only written if there is one.
+    public static void Save(Config cfg, ConfigFiles? files = null)
     {
-        if (File.Exists(Path) && Read(out _) == null) return;
-        try { File.WriteAllText(Path, Serialize(cfg)); }
+        files ??= Standard;
+        if (!ReadBoth(files, out var synced, out var local, out _, out _)) return;
+        var (syncedOut, localOut) = SplitSettings(JsonSerializer.SerializeToNode(cfg, options)!, synced ?? new JsonObject(), local);
+        try
+        {
+            File.WriteAllText(files.Synced, Serialize(syncedOut));
+            if (localOut != null) File.WriteAllText(files.Local, Serialize(localOut));
+        }
         catch (IOException) { }
     }
+
+    /// The synced settings with the local ones over them. A setting in the local file wins. A server in the local file
+    /// replaces the synced server with its name. A control in the local file replaces the synced control with its name,
+    /// ignoring case, where that one is, and the rest go at the end. Nothing inside a server or control is merged.
+    /// macos/Config.swift and windows/Config.cs do this the same way; change both together.
+    public static JsonNode MergeSettings(JsonNode synced, JsonNode? local)
+    {
+        var merged = synced.DeepClone();
+        if (merged is not JsonObject m || local is not JsonObject l) return merged;
+        foreach (var (key, value) in l)
+        {
+            if (key == "servers" && m[key] is JsonObject servers && value is JsonObject localServers)
+            {
+                foreach (var (name, server) in localServers) servers[name] = server?.DeepClone();
+            }
+            else if (key == "controls" && m[key] is JsonArray controls && value is JsonArray localControls)
+            {
+                foreach (var control in localControls)
+                {
+                    int i = IndexOf(controls, control);
+                    if (i >= 0) controls[i] = control?.DeepClone();
+                    else controls.Add(control?.DeepClone());
+                }
+            }
+            else
+            {
+                m[key] = value?.DeepClone();
+            }
+        }
+        return m;
+    }
+
+    /// Splits settings that MergeSettings made, perhaps changed since, back into the two files. `synced` and `local`
+    /// are the files as they are now: the synced file keeps what the local file overrides, and everything else that's
+    /// in the local file goes back to it. New settings, servers and controls go to the synced file.
+    public static (JsonNode Synced, JsonNode? Local) SplitSettings(JsonNode merged, JsonNode synced, JsonNode? local)
+    {
+        if (merged is not JsonObject m || local is not JsonObject l) return (merged.DeepClone(), null);
+        var s = synced as JsonObject ?? new JsonObject();
+        JsonObject syncedOut = new(), localOut = new();
+
+        foreach (var (key, value) in m)
+        {
+            if (key == "servers" && value is JsonObject servers)
+            {
+                var localNames = (l[key] as JsonObject)?.Select(p => p.Key).ToHashSet() ?? [];
+                JsonObject mine = new(), theirs = new();
+                if (s[key] is JsonObject syncedServers)
+                    foreach (var (name, server) in syncedServers)
+                        if (localNames.Contains(name)) theirs[name] = server?.DeepClone();
+                foreach (var (name, server) in servers)
+                    (localNames.Contains(name) ? mine : theirs)[name] = server?.DeepClone();
+                if (l[key] != null) localOut[key] = mine;
+                if (s[key] != null || theirs.Count > 0 || l[key] == null) syncedOut[key] = theirs;
+            }
+            else if (key == "controls" && value is JsonArray controls)
+            {
+                var localControls = l[key] as JsonArray ?? [];
+                var syncedControls = s[key] as JsonArray ?? [];
+                var mine = new List<(int Index, JsonNode? Control)>();
+                var theirs = new JsonArray();
+                foreach (var control in controls)
+                {
+                    int i = IndexOf(localControls, control);
+                    if (i >= 0)
+                    {
+                        mine.Add((i, control?.DeepClone()));
+                        int overridden = IndexOf(syncedControls, control);
+                        if (overridden >= 0) theirs.Add(syncedControls[overridden]?.DeepClone());
+                    }
+                    else
+                    {
+                        theirs.Add(control?.DeepClone());
+                    }
+                }
+                if (l[key] != null) localOut[key] = new JsonArray(mine.OrderBy(c => c.Index).Select(c => c.Control).ToArray());
+                if (s[key] != null || theirs.Count > 0 || l[key] == null) syncedOut[key] = theirs;
+            }
+            else if (l.ContainsKey(key))
+            {
+                localOut[key] = value?.DeepClone();
+                if (s.ContainsKey(key)) syncedOut[key] = s[key]?.DeepClone();
+            }
+            else
+            {
+                syncedOut[key] = value?.DeepClone();
+            }
+        }
+        return (syncedOut, localOut);
+    }
+
+    static int IndexOf(JsonArray controls, JsonNode? control)
+    {
+        var name = Name(control);
+        if (name == null) return -1;
+        for (int i = 0; i < controls.Count; i++)
+            if (string.Equals(Name(controls[i]), name, StringComparison.OrdinalIgnoreCase)) return i;
+        return -1;
+    }
+
+    static string? Name(JsonNode? control) =>
+        control is JsonObject o && o["name"] is JsonValue v && v.TryGetValue<string>(out var name) ? name : null;
 
     /// The settings as JSON, written exactly as the macOS version writes them (canonicalJSON in macos/Config.swift),
     /// so a file synced between the two only changes where a setting did: keys in ordinal order, two-space indents,
     /// "key": value, \n line endings, and only the characters JSON requires escaped.
-    public static string Serialize(Config cfg)
+    public static string Serialize(Config cfg) => Serialize(JsonSerializer.SerializeToNode(cfg, options));
+
+    static string Serialize(JsonNode? json)
     {
         var text = new StringBuilder();
-        Write(JsonSerializer.SerializeToNode(cfg, options), "", text);
+        Write(json, "", text);
         return text.Append('\n').ToString();
     }
 
@@ -292,5 +431,11 @@ public static class ConfigFile
         text.Append('"');
     }
 
-    public static DateTime? Modified() => File.Exists(Path) ? File.GetLastWriteTimeUtc(Path) : null;
+    /// When each settings file last changed, to notice edits to either.
+    public static (DateTime?, DateTime?) Modified(ConfigFiles? files = null)
+    {
+        files ??= Standard;
+        static DateTime? When(string path) => File.Exists(path) ? File.GetLastWriteTimeUtc(path) : null;
+        return (When(files.Synced), When(files.Local));
+    }
 }

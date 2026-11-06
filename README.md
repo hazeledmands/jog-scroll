@@ -140,6 +140,26 @@ If the file can't be read, for example after a hand edit with a typo, Jog Scroll
 
 The file can be shared between computers, with Syncthing for example. Both versions write it the same way (keys in alphabetical order), so it only changes where a setting did, and each keeps the other's scroll sensitivity (`pixelsPerTick` on macOS, `wheelUnitsPerTick` on Windows). Set `portName` to the part of the controller's name that's the same everywhere, like `Reloop Ready`: learning the jog wheel keeps a `portName` that already matches. `${file:…}` paths differ between Windows and macOS, so in a shared file, write a server's address and token out in full.
 
+### Settings that stay on one computer
+
+Settings for one computer only, like a control for an app the other computer doesn't have, or a server whose token is in a `${file:…}` path, can go in `config.local.json` beside `config.json`. It has the same keys, and Jog Scroll reads both:
+
+- A setting in `config.local.json`, like `portName`, wins.
+- A server in `config.local.json` replaces the server with its name in `config.json`, and other servers are added.
+- A control in `config.local.json` replaces the control with its name in `config.json` (ignoring case) in the same place, and other controls are added after them.
+- Servers and controls are replaced whole: a local control with the same name as a synced one needs all of its settings, not only the ones that differ.
+
+When Jog Scroll saves, for example after learning a control, each control and server goes back to the file it came from. New controls go in `config.json`, so to make one local, move it into `config.local.json` by hand. Jog Scroll never makes `config.local.json`. If either file can't be read, it runs on the defaults and saves neither.
+
+If you sync the folder with Syncthing, add `config.local.json` to that folder's `.stignore` on each computer, or Syncthing shares it too. Syncthing doesn't sync `.stignore` itself.
+
+```json
+{
+  "servers": { "hue": { "url": "http://127.0.0.1:${file:~/Library/Application Support/hue-tray/config.json#apiPort}/api/v1/" } },
+  "controls": [ { "name": "Desk brightness", "actions": [ { "server": "hue", "method": "PATCH", "path": "rooms/Office", "body": { "brightness": "$value" } } ] } ]
+}
+```
+
 | key | default | meaning |
 |---|---|---|
 | `portName` | Reloop Ready | MIDI input to listen to (part of its name is enough) |
@@ -154,8 +174,8 @@ Both versions have the same commands: `jog-scroll run` (scroll without the icon,
 
 ## Repository layout
 
-- `macos/`: the Swift app (`main.swift`) and its build, install and signing scripts
-- `windows/`: the C#/.NET app and its build and install scripts
+- `macos/`: the Swift app (`main.swift`) and its build, install and signing scripts. `macos/test.sh` runs the tests in `macos/tests/`.
+- `windows/`: the C#/.NET app and its build and install scripts. `dotnet test windows/Tests` runs the tests in `windows/Tests/`.
 - `icon/`: the app icon, shared by both. `make-icon.swift` draws it, and `make-ico.ps1` converts it for Windows.
 
-The two versions share no code, so the rules above are written twice, in files with the same names: `Config`, `Controls`, `Jog`, `Fader` and `Outputs` (`.swift` in `macos/`, `.cs` in `windows/`). When you change how a control behaves, change both and update this README.
+The two versions share no code, so the rules above are written twice, in files with the same names: `Config`, `Controls`, `Jog`, `Fader` and `Outputs` (`.swift` in `macos/`, `.cs` in `windows/`). When you change how a control behaves or how the settings files are read, change both, and their tests, and update this README.

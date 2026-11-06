@@ -16,7 +16,7 @@ sealed class TrayApp : ApplicationContext
     readonly ContextMenuStrip menu = new();
     readonly TrayIcons icons = new();
     readonly System.Windows.Forms.Timer poll = new() { Interval = 2000 };
-    DateTime? configDate;
+    (DateTime?, DateTime?) configDate;
     string? shownPrompt;
     bool listeningEverywhere;
     readonly Dictionary<string, string?> errors = new();   // the last error shown for each server, so it alerts only once
@@ -65,7 +65,7 @@ sealed class TrayApp : ApplicationContext
     void ReportLoadError()
     {
         if (ConfigFile.LoadError is { } error)
-            Notify("The settings file has an error", $"Jog Scroll won't change it until it's fixed. {error}");
+            Notify($"{System.IO.Path.GetFileName(ConfigFile.LoadErrorPath ?? ConfigFile.Path)} has an error", $"Jog Scroll won't change it until it's fixed. {error}");
     }
 
     // Learning a jog wheel listens to every input to find the controller. Otherwise open only the controller,
