@@ -3,8 +3,6 @@ using static JogScroll.Native;
 
 namespace JogScroll;
 
-public readonly record struct MidiMessage(byte Status, byte Data1, byte Data2, string Source);
-
 /// Opens the MIDI inputs that `wanted` accepts and checks every second for devices being plugged
 /// in or out. WinMM gives one program a device at a time, so it leaves the others alone, and it
 /// keeps retrying a device another program is using.

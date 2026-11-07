@@ -7,13 +7,14 @@ protocol Output: AnyObject {
     func send(_ action: ControlAction, _ value: Double)
 }
 
-/// Carries out actions: scrolling, requests to servers, and showing numbers on the controller's lights. It
+/// Carries out actions: scrolling, pressing keys, requests to servers, and showing numbers on the controller's lights. It
 /// makes an output for each server in the settings as it's first needed, and again after the settings change.
 /// Everything runs on the main queue. windows/Outputs.cs is the same for the Windows version; change both together.
 final class Outputs {
     private let servers: () -> [String: ServerConfig]
     private var made: [String: (config: ServerConfig, output: Output)] = [:]
     let scroll = ScrollOutput()
+    private(set) var keys: KeyOutput!
     private(set) var lights: Lights!
 
     /// Called after each request with the server's name (or "scroll" or "lights") and nil, or why it failed.
@@ -22,11 +23,13 @@ final class Outputs {
     init(servers: @escaping () -> [String: ServerConfig], outputPort: @escaping () -> String) {
         self.servers = servers
         lights = Lights(port: outputPort) { [weak self] error in self?.onResult?("lights", error) }
+        keys = KeyOutput { [weak self] in self?.onResult?($0, $1) }
     }
 
     /// For a jog wheel: it turned this many ticks, already sped up and inverted as the control says.
     func turn(_ control: MidiControl, _ action: ControlAction, ticks: Double) {
         if action.isScroll { scroll.turn(action, ticks: ticks) }
+        else if action.isKeys { onResult?("keys", "\(control.name): only a button can press keys") }
         else if let type = action.type { onResult?(type, "\(control.name): there's no action type called \"\(type)\"") }
         else { onResult?(action.server ?? "", "\(control.name): a jog wheel can only scroll so far") }
     }
@@ -35,6 +38,10 @@ final class Outputs {
     func setPosition(_ control: MidiControl, _ action: ControlAction, position: Double) {
         if action.isScroll {
             onResult?("scroll", "\(control.name): only a jog wheel can scroll")
+            return
+        }
+        if action.isKeys {
+            onResult?("keys", "\(control.name): only a button can press keys")
             return
         }
         if let type = action.type {

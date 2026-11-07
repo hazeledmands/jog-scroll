@@ -202,6 +202,126 @@ do {
     check(configModified(files) != before, "a new local file counts as a change to the settings")
 }
 
+// MARK: - Key combinations
+
+do {
+    let cases: [(String, KeyCombo?)] = [
+        ("ctrl+shift+option+p", KeyCombo(key: 35, flags: [.maskControl, .maskShift, .maskAlternate])),
+        (" Control + Alt + Shift + P ", KeyCombo(key: 35, flags: [.maskControl, .maskShift, .maskAlternate])),
+        ("cmd+space", KeyCombo(key: 49, flags: [.maskCommand])),
+        ("command+shift+4", KeyCombo(key: 21, flags: [.maskCommand, .maskShift])),
+        ("f5", KeyCombo(key: 96, flags: [])),
+        ("opt+escape", KeyCombo(key: 53, flags: [.maskAlternate])),
+        ("ctrl+/", KeyCombo(key: 44, flags: [.maskControl])),
+        ("", nil),
+        ("ctrl+shift", nil),
+        ("p+q", nil),
+        ("hyper+p", nil),
+        ("ctrl++p", nil),
+    ]
+    for (text, want) in cases {
+        let got = try? KeyCombo(text)
+        check(got == want, "KeyCombo(\"\(text)\"): got \(String(describing: got)), want \(String(describing: want))")
+    }
+    do { _ = try KeyCombo("hyper+p"); check(false, "an unknown key is an error") }
+    catch { check("\(error)".contains("hyper"), "the error names the unknown key: \(error)") }
+}
+
+// MARK: - Buttons
+
+func note(_ on: Bool, _ number: UInt8, velocity: UInt8 = 127) -> MidiMessage {
+    MidiMessage(status: on ? 0x90 : 0x80, data1: number, data2: velocity, source: "Reloop Ready")
+}
+
+func keysAction(_ keys: String, on: String? = nil) -> ControlAction {
+    let action = ControlAction()
+    action.type = "keys"
+    action.keys = keys
+    action.on = on
+    return action
+}
+
+func button(_ actions: [ControlAction], midi: MidiMatch = MidiMatch(status: 0x90, data1: 7)) -> MidiControl {
+    let control = MidiControl()
+    control.name = "Puck"
+    control.type = "button"
+    control.midi = midi
+    control.actions = actions
+    return control
+}
+
+/// Sends the messages to a button with these actions, and returns the key combinations it pressed, as the
+/// action's keys, and the errors it reported.
+func pressed(_ actions: [ControlAction], _ messages: [MidiMessage], midi: MidiMatch = MidiMatch(status: 0x90, data1: 7)) -> (keys: [String], errors: [String]) {
+    var keys: [String] = [], errors: [String] = []
+    let output = KeyOutput { _, error in if let error { errors.append(error) } }
+    output.post = { combo in keys.append(actions.first { (try? KeyCombo($0.keys ?? "")) == combo }?.keys ?? "?") }
+    let b = Button(control: button(actions, midi: midi), keys: output)
+    for m in messages { b.handle(m) }
+    return (keys, errors)
+}
+
+do {
+    let puck = "ctrl+shift+option+p"
+    check(pressed([keysAction(puck)], [note(true, 7), note(false, 7)]).keys == [puck], "by default, keys are pressed when the button is")
+    check(pressed([keysAction(puck, on: "release")], [note(true, 7), note(false, 7)]).keys == [puck], "on release")
+    check(pressed([keysAction(puck, on: "both")], [note(true, 7), note(false, 7), note(true, 7), note(false, 7)]).keys == [puck, puck, puck, puck],
+          "on both: pressing shows Puck and letting go hides it")
+    check(pressed([keysAction(puck, on: "both")], [note(true, 7), note(true, 7, velocity: 0)]).keys == [puck, puck],
+          "a note on with velocity 0 is letting go")
+    check(pressed([keysAction(puck, on: "both")], [note(true, 7), note(true, 7)]).keys == [puck], "a repeated press counts once")
+    check(pressed([keysAction(puck, on: "both")], [note(false, 7)]).keys.isEmpty,
+          "letting go without a press does nothing, such as just after learning the button")
+    check(pressed([keysAction(puck, on: "both")], [note(true, 8), note(false, 8)]).keys.isEmpty, "other notes do nothing")
+    check(pressed([keysAction(puck, on: "both")],
+                  [MidiMessage(status: 0x91, data1: 7, data2: 127, source: "")]).keys.isEmpty, "the same note on another channel does nothing")
+    let cc = MidiMatch(status: 0xB0, data1: 20)
+    check(pressed([keysAction(puck, on: "both")],
+                  [MidiMessage(status: 0xB0, data1: 20, data2: 127, source: ""), MidiMessage(status: 0xB0, data1: 20, data2: 0, source: "")],
+                  midi: cc).keys == [puck, puck], "a button that sends a CC")
+    check(pressed([keysAction("ctrl+a"), keysAction("ctrl+b", on: "release")], [note(true, 7), note(false, 7)]).keys == ["ctrl+a", "ctrl+b"],
+          "each action in turn")
+
+    let bad = pressed([keysAction("hyper+p")], [note(true, 7)])
+    check(bad.keys.isEmpty && bad.errors.contains { $0.contains("Puck") && $0.contains("hyper") }, "unknown keys are reported: \(bad.errors)")
+    let badOn = pressed([keysAction(puck, on: "hold")], [note(true, 7)])
+    check(badOn.keys.isEmpty && badOn.errors.contains { $0.contains("hold") }, "an unknown \"on\" is reported: \(badOn.errors)")
+    let request = ControlAction()
+    request.server = "hue"
+    check(!pressed([request], [note(true, 7)]).errors.isEmpty, "a button can't send requests yet, and says so")
+}
+
+do {
+    let outputs = Outputs(servers: { [:] }, outputPort: { "" })
+    var errors: [String] = []
+    outputs.onResult = { _, error in if let error { errors.append(error) } }
+    outputs.setPosition(button([]), keysAction("ctrl+a"), position: 0.5)
+    outputs.turn(button([]), keysAction("ctrl+a"), ticks: 1)
+    check(errors.count == 2 && errors.allSatisfy { $0.contains("only a button") }, "faders and jog wheels say only a button presses keys: \(errors)")
+}
+
+// MARK: - Learning a button
+
+do {
+    let cfg = Config()
+    let jog = MidiControl.newJog()
+    jog.midi = MidiMatch(status: 0xB0, data1: 33)
+    jog.touch = MidiMatch(status: 0x90, data1: 54)
+    let puck = button([])
+    puck.midi = nil
+    cfg.controls = [jog, puck]
+    let learner = ButtonLearner(control: puck, cfg: cfg)
+    var done = false
+    learner.done = { done = true }
+    learner.handle(note(true, 54))    // touching the jog wheel
+    learner.handle(MidiMessage(status: 0xB0, data1: 33, data2: 1, source: ""))
+    learner.handle(note(false, 9))    // letting go of something pressed before learning started
+    check(!done && puck.midi == nil, "learning ignores the jog wheel and letting go")
+    learner.handle(note(true, 9))
+    check(done && puck.midi == MidiMatch(status: 0x90, data1: 9), "the first press is the button: \(String(describing: puck.midi))")
+    check(ControlRouter(cfg: cfg).canLearn(puck), "buttons can be learned")
+}
+
 if failures > 0 {
     print("\(failures) failed")
     exit(1)

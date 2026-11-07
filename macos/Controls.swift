@@ -22,7 +22,7 @@ class Learner {
 }
 
 /// Sends each MIDI message to the controls that use it, and runs learning. Everything runs on the main queue.
-/// Each type of control is in its own file: Jog.swift and Fader.swift.
+/// Each type of control is in its own file: Jog.swift, Fader.swift and Button.swift.
 /// windows/Controls.cs is the same for the Windows version; change both together.
 final class ControlRouter {
     private var handlers: [ObjectIdentifier: ControlHandler?] = [:]
@@ -83,12 +83,13 @@ final class ControlRouter {
         return jog
     }
 
-    func canLearn(_ control: MidiControl) -> Bool { control.isJog || control.isFader }
+    func canLearn(_ control: MidiControl) -> Bool { control.isJog || control.isFader || control.isButton }
 
     func startLearning(_ control: MidiControl) {
         learner?.cancel()
         learner = control.isJog ? JogLearner(control: control, cfg: cfg)
             : control.isFader ? FaderLearner(control: control, cfg: cfg)
+            : control.isButton ? ButtonLearner(control: control, cfg: cfg)
             : nil
         guard let started = learner else {
             onResult?(control.name, "\(control.name): there's no control type called \"\(control.type)\"")
@@ -126,6 +127,7 @@ final class ControlRouter {
         if let handler = handlers[ObjectIdentifier(control)] { return handler }
         let handler: ControlHandler? = control.isJog ? Jog(control: control, outputs: outputs, changed: { [weak self] in self?.onChange?() })
             : control.isFader ? Fader(control: control, outputs: outputs)
+            : control.isButton ? Button(control: control, keys: outputs.keys)
             : nil
         if handler == nil { onResult?(control.name, "\(control.name): there's no control type called \"\(control.type)\"") }
         handlers[ObjectIdentifier(control)] = .some(handler)

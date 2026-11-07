@@ -391,7 +391,7 @@ func runLearnControl(_ name: String) -> Never {
         exit(1)
     }
     guard controls.canLearn(control) else {
-        print("\(control.name): there's no control type called \"\(control.type)\". Use \"jog\" or \"fader\".")
+        print("\(control.name): there's no control type called \"\(control.type)\". Use \"jog\", \"fader\" or \"button\".")
         exit(1)
     }
     learn(controls, control)
@@ -453,7 +453,7 @@ default:
       jog-scroll              menu bar app
       jog-scroll run          run without the menu bar icon, logging to the terminal
       jog-scroll learn        record which MIDI messages your jog wheel sends
-      jog-scroll learn-control NAME  record which jog wheel, fader or knob the control NAME uses
+      jog-scroll learn-control NAME  record which jog wheel, fader, knob or button the control NAME uses
       jog-scroll monitor      print every incoming MIDI message
       jog-scroll login on|off start (or stop starting) the menu bar app at login
     Settings: \(configURL.path), and \(ConfigFiles.standard.local.lastPathComponent) beside it for settings that stay on this computer

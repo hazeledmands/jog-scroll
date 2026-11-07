@@ -49,7 +49,7 @@ static class Program
                     Usage:
                       jog-scroll run          run without the tray icon, logging to the terminal
                       jog-scroll learn        record which MIDI messages your jog wheel sends
-                      jog-scroll learn-control NAME  record which jog wheel, fader or knob the control NAME uses
+                      jog-scroll learn-control NAME  record which jog wheel, fader, knob or button the control NAME uses
                       jog-scroll monitor      print every incoming MIDI message
                       jog-scroll login on|off start (or stop starting) the tray app at login
                     The tray app is JogScroll.exe.
@@ -115,7 +115,7 @@ static class Program
         }
         if (!controls.CanLearn(control))
         {
-            Console.WriteLine($"{control.Name}: there's no control type called \"{control.Type}\". Use \"jog\" or \"fader\".");
+            Console.WriteLine($"{control.Name}: there's no control type called \"{control.Type}\". Use \"jog\", \"fader\" or \"button\".");
             return 1;
         }
         return Learn(controls, control);

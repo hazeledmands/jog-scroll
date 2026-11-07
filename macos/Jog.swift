@@ -15,25 +15,10 @@ final class Jog: ControlHandler {
         self.changed = changed
     }
 
-    static func isTouchMessage(_ m: MidiMessage, _ t: MidiMatch) -> Bool {
-        guard m.data1 == t.data1, m.status & 0x0F == t.status & 0x0F else { return false }
-        let type = m.status & 0xF0, learned = t.status & 0xF0
-        if learned == 0x90 || learned == 0x80 { return type == 0x90 || type == 0x80 }
-        return type == learned
-    }
-
-    static func isTouchDown(_ m: MidiMessage) -> Bool {
-        switch m.status & 0xF0 {
-        case 0x80: return false
-        case 0x90: return m.data2 > 0
-        default:   return m.data2 >= 64
-        }
-    }
-
     func handle(_ m: MidiMessage) {
-        if let touch = control.touch, Self.isTouchMessage(m, touch) {
+        if let touch = control.touch, Button.matches(m, touch) {
             releaseTimer?.cancel()  // re-touching within the hold window keeps it fast
-            if Self.isTouchDown(m) {
+            if Button.isDown(m) {
                 fast = true
             } else {
                 let work = DispatchWorkItem { [weak self] in self?.fast = false }
@@ -74,7 +59,7 @@ final class JogLearner: Learner {
         guard type == 0x80 || type == 0x90 || type == 0xB0 else { return }
         guard let touch else {
             // Take the first note/CC press as the touch sensor.
-            guard Jog.isTouchDown(m) else { return }
+            guard Button.isDown(m) else { return }
             self.touch = MidiMatch(status: m.status, data1: m.data1)
             source = m.source
             changed?()
@@ -82,7 +67,7 @@ final class JogLearner: Learner {
         }
 
         // Wait for the same controller to repeat a few times so a stray button doesn't count.
-        guard type == 0xB0, m.source == source, !Jog.isTouchMessage(m, touch) else { return }
+        guard type == 0xB0, m.source == source, !Button.matches(m, touch) else { return }
         let match = MidiMatch(status: m.status, data1: m.data1)
         if match == candidate { candidateCount += 1 } else { candidate = match; candidateCount = 1 }
         guard candidateCount >= 5 else { return }

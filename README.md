@@ -10,7 +10,7 @@ How it behaves:
 
 ## Controls
 
-The jog wheel is one of the **controls** in the settings: things on the controller, and what each one does when it moves. A jog wheel scrolls, and it can be joined by faders and knobs that send their position to other programs as HTTP requests: to dim lights through [Hue Tray](https://github.com/hazeledmands/huetray), for example. Each program is a server in `servers`, and each control is an entry in `controls` with a list of `actions`:
+The jog wheel is one of the **controls** in the settings: things on the controller, and what each one does when it moves. A jog wheel scrolls, and it can be joined by faders and knobs that send their position to other programs as HTTP requests: to dim lights through [Hue Tray](https://github.com/hazeledmands/huetray), for example. Buttons press key combinations, for an app's keyboard shortcut. Each program is a server in `servers`, and each control is an entry in `controls` with a list of `actions`:
 
 ```json
 "servers": {
@@ -57,13 +57,13 @@ A control:
 | key | default | meaning |
 |---|---|---|
 | `name` | | what the menu calls it |
-| `type` | `fader` | `jog` for a jog wheel, which sends turns, or `fader` for a fader or knob, which sends its position |
+| `type` | `fader` | `jog` for a jog wheel, which sends turns, `fader` for a fader or knob, which sends its position, or `button` for a button or pad, which is pressed and let go |
 | `actions` | | what it does whenever it moves |
 | `invert` | false | for a jog, scroll the other way. For a fader, its top sends the lowest value, like most tempo faders |
 | `touchMultiplier` (jog) | 10 | speed-up while the jog top is touched |
 | `touchHoldSeconds` (jog) | 1.0 | how long the speed-up lasts after letting go |
 | `centerThreshold` (jog) | 50 | values below this are clockwise turns, and values above are counter-clockwise |
-| `midi`, `touch`, `fine`, `low`, `high` | | the learned control: its MIDI message, a jog's touch sensor, the CC with a fader's fine value (for high-resolution faders, which send two), and the lowest and highest values a fader sends |
+| `midi`, `touch`, `fine`, `low`, `high` | | the learned control: its MIDI message (a button's, when it's pressed), a jog's touch sensor, the CC with a fader's fine value (for high-resolution faders, which send two), and the lowest and highest values a fader sends |
 
 An action that scrolls, for a jog wheel:
 
@@ -72,6 +72,26 @@ An action that scrolls, for a jog wheel:
 | `type` | | `scroll` |
 | `wheelUnitsPerTick` (Windows) | 5 | scroll distance per jog tick, in wheel units (120 = one mouse-wheel notch) |
 | `pixelsPerTick` (macOS) | 4 | scroll distance per jog tick, in pixels; decimals like `2.5` work |
+
+An action that presses keys, for a button:
+
+| key | default | meaning |
+|---|---|---|
+| `type` | | `keys` |
+| `keys` | | the key combination, like `ctrl+shift+option+p`. Modifiers are `ctrl`, `shift`, `option` (or `alt`) and `cmd` (the Windows key on Windows). Keys are letters, digits, `f1`–`f12`, `space`, `return`, `tab`, `escape`, `delete`, the arrows (`left` and so on) and punctuation like `/`. Keys are where they are on a US keyboard |
+| `on` | `press` | when: `press`, `release` (letting go), or `both` |
+
+For example, Amp's shortcut for calling Puck shows Puck and then hides it the second time. Pressing it on `both` shows Puck while you hold a button down:
+
+```json
+{
+  "name": "Puck",
+  "type": "button",
+  "actions": [ { "type": "keys", "keys": "ctrl+shift+option+p", "on": "both" } ]
+}
+```
+
+To teach it which button to use, choose its name under **Controls** in the menu, or run `jog-scroll learn-control Puck`, and press the button. The keys are pressed in whichever app is in front, so the shortcut needs to work from anywhere (a global shortcut). On macOS this uses the Accessibility permission that scrolling already needs.
 
 An action that sends a request, for a fader or knob:
 
@@ -121,7 +141,7 @@ For example, with [Hue Tray](https://github.com/hazeledmands/huetray)'s scopes, 
 }
 ```
 
-Requests to the same method and path go one at a time. If the control moves while one is on its way, the next request carries the newest value, and the fields of JSON bodies from different controls are merged. A fast sweep therefore sends only a few requests. A control sends its position whenever it moves, so after something else changes the setting, the control jumps it back to where the control is. Jog wheels can only scroll so far, and buttons and encoders don't work yet. To find which MIDI message a light uses, `jog-scroll monitor` shows what each pad sends.
+Requests to the same method and path go one at a time. If the control moves while one is on its way, the next request carries the newest value, and the fields of JSON bodies from different controls are merged. A fast sweep therefore sends only a few requests. A control sends its position whenever it moves, so after something else changes the setting, the control jumps it back to where the control is. Jog wheels can only scroll and buttons can only press keys so far, and encoders don't work yet. To find which MIDI message a light uses, `jog-scroll monitor` shows what each pad sends.
 
 ## Install
 
@@ -175,7 +195,7 @@ Both versions have the same commands: `jog-scroll run` (scroll without the icon,
 ## Repository layout
 
 - `macos/`: the Swift app (`main.swift`) and its build, install and signing scripts. `macos/test.sh` runs the tests in `macos/tests/`.
-- `windows/`: the C#/.NET app and its build and install scripts. `dotnet test windows/Tests` runs the tests in `windows/Tests/`.
+- `windows/`: the C#/.NET app and its build and install scripts. `Handlers.cs` has what's in `Midi.swift` and `Controls.swift` that the tests need, so they compile without Windows Forms. `dotnet test windows/Tests` runs the tests in `windows/Tests/`.
 - `icon/`: the app icon, shared by both. `make-icon.swift` draws it, and `make-ico.ps1` converts it for Windows.
 
-The two versions share no code, so the rules above are written twice, in files with the same names: `Config`, `Controls`, `Jog`, `Fader` and `Outputs` (`.swift` in `macos/`, `.cs` in `windows/`). When you change how a control behaves or how the settings files are read, change both, and their tests, and update this README.
+The two versions share no code, so the rules above are written twice, in files with the same names: `Config`, `Controls`, `Jog`, `Fader`, `Button`, `Keys` and `Outputs` (`.swift` in `macos/`, `.cs` in `windows/`). When you change how a control behaves or how the settings files are read, change both, and their tests, and update this README.
