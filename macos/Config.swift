@@ -131,7 +131,7 @@ final class ServerConfig: Codable {
 /// Something on the controller, and what it does. A jog wheel sends turns; a fader or knob sends its position.
 final class MidiControl: Codable {
     var name = ""
-    var type = "fader"                        // "fader" (also for knobs) or "jog"
+    var type = "fader"                        // "fader" (also for knobs), "jog" or "button"
     var midi: MidiMatch?                      // learned from the menu or `jog-scroll learn-control`
     var invert = false                        // a fader whose top sends the lowest value, or a jog turning the other way
 
@@ -168,6 +168,7 @@ final class MidiControl: Codable {
 
     var isJog: Bool { type.lowercased() == "jog" }
     var isFader: Bool { type.lowercased() == "fader" }
+    var isButton: Bool { type.lowercased() == "button" }
 
     /// A jog wheel that scrolls, with every setting written out so they're easy to find in the settings file.
     static func newJog() -> MidiControl {
@@ -189,7 +190,7 @@ final class MidiControl: Codable {
 /// the control's position scaled to range (a body string that's exactly "$value" becomes a number), or, for
 /// a jog wheel, scrolling.
 final class ControlAction: Codable {
-    var type: String?                         // "scroll", or leave it out for a request to a server
+    var type: String?                         // "scroll", "keys", or leave it out for a request to a server
 
     // Requests
     var server: String?
@@ -201,6 +202,10 @@ final class ControlAction: Codable {
     var response: String?                     // where the number to show is in the answer: a key, or keys separated by dots
     var show: ShowConfig?                     // lights on the controller that show that number
 
+    // Pressing keys, for a button
+    var keys: String?                         // a key combination, like "ctrl+shift+option+p"
+    var on: String?                           // "press" (if left out), "release", or "both"
+
     // Scrolling
     var pixelsPerTick: Double?                // scroll distance per jog tick; fractions accumulate
     var wheelUnitsPerTick: Double?            // the Windows version's setting, kept so a synced file doesn't lose it
@@ -208,6 +213,7 @@ final class ControlAction: Codable {
     init() {}
 
     var isScroll: Bool { type?.lowercased() == "scroll" }
+    var isKeys: Bool { type?.lowercased() == "keys" }
 }
 
 /// Lights on the controller that show a number by lighting that many of them, for a moment. The number is the one

@@ -19,27 +19,12 @@ sealed class Jog : IControlHandler
 
     public bool Fast { get => fast; private set { if (fast != value) { fast = value; changed(); } } }
 
-    public static bool IsTouchMessage(MidiMessage m, MidiMatch t)
-    {
-        if (m.Data1 != t.Data1 || (m.Status & 0x0F) != (t.Status & 0x0F)) return false;
-        int type = m.Status & 0xF0, learned = t.Status & 0xF0;
-        if (learned == 0x90 || learned == 0x80) return type == 0x90 || type == 0x80;
-        return type == learned;
-    }
-
-    public static bool IsTouchDown(MidiMessage m) => (m.Status & 0xF0) switch
-    {
-        0x80 => false,
-        0x90 => m.Data2 > 0,
-        _ => m.Data2 >= 64,
-    };
-
     public void Handle(MidiMessage m)
     {
-        if (control.Touch is { } touch && IsTouchMessage(m, touch))
+        if (control.Touch is { } touch && Button.Matches(m, touch))
         {
             releaseTimer?.Cancel();   // re-touching within the hold window keeps it fast
-            if (IsTouchDown(m))
+            if (Button.IsDown(m))
             {
                 Fast = true;
             }
@@ -95,7 +80,7 @@ sealed class JogLearner : Learner
         if (touch == null)
         {
             // Take the first note/CC press as the touch sensor.
-            if (!Jog.IsTouchDown(m)) return;
+            if (!Button.IsDown(m)) return;
             touch = new MidiMatch { Status = m.Status, Data1 = m.Data1 };
             source = m.Source;
             Changed?.Invoke();
@@ -103,7 +88,7 @@ sealed class JogLearner : Learner
         }
 
         // Wait for the same controller to repeat a few times so a stray button doesn't count.
-        if (type != 0xB0 || m.Source != source || Jog.IsTouchMessage(m, touch)) return;
+        if (type != 0xB0 || m.Source != source || Button.Matches(m, touch)) return;
         var match = new MidiMatch { Status = m.Status, Data1 = m.Data1 };
         if (match == candidate) candidateCount++; else { candidate = match; candidateCount = 1; }
         if (candidateCount < 5) return;

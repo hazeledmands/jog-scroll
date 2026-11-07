@@ -91,7 +91,7 @@ public sealed class ServerConfig
 public sealed class MidiControl
 {
     public string Name { get; set; } = "";
-    public string Type { get; set; } = "fader";              // "fader" (also for knobs) or "jog"
+    public string Type { get; set; } = "fader";              // "fader" (also for knobs), "jog" or "button"
     public MidiMatch? Midi { get; set; }                     // learned from the menu or `jog-scroll learn-control`
     public bool Invert { get; set; }                         // a fader whose top sends the lowest value, or a jog turning the other way
 
@@ -110,6 +110,7 @@ public sealed class MidiControl
 
     [JsonIgnore] public bool IsJog => Type.Equals("jog", StringComparison.OrdinalIgnoreCase);
     [JsonIgnore] public bool IsFader => Type.Equals("fader", StringComparison.OrdinalIgnoreCase);
+    [JsonIgnore] public bool IsButton => Type.Equals("button", StringComparison.OrdinalIgnoreCase);
 
     /// A jog wheel that scrolls, with every setting written out so they're easy to find in the settings file.
     public static MidiControl NewJog() => new()
@@ -128,7 +129,7 @@ public sealed class MidiControl
 /// a jog wheel, scrolling.
 public sealed class ControlAction
 {
-    public string? Type { get; set; }                        // "scroll", or leave it out for a request to a server
+    public string? Type { get; set; }                        // "scroll", "keys", or leave it out for a request to a server
 
     // Requests
     public string? Server { get; set; }
@@ -140,11 +141,16 @@ public sealed class ControlAction
     public string? Response { get; set; }                    // where the number to show is in the answer: a key, or keys separated by dots
     public ShowConfig? Show { get; set; }                    // lights on the controller that show that number
 
+    // Pressing keys, for a button
+    public string? Keys { get; set; }                        // a key combination, like "ctrl+shift+option+p"
+    public string? On { get; set; }                          // "press" (if left out), "release", or "both"
+
     // Scrolling
     public double? WheelUnitsPerTick { get; set; }           // 120 = one mouse-wheel notch; fractions accumulate
     public double? PixelsPerTick { get; set; }               // the macOS version's setting, kept so a synced file doesn't lose it
 
     [JsonIgnore] public bool IsScroll => string.Equals(Type, "scroll", StringComparison.OrdinalIgnoreCase);
+    [JsonIgnore] public bool IsKeys => string.Equals(Type, "keys", StringComparison.OrdinalIgnoreCase);
 }
 
 /// Lights on the controller that show a number by lighting that many of them, for a moment. The number is the one

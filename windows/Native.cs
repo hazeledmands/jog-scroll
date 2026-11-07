@@ -58,7 +58,8 @@ static class Native
 
     // MARK: Mouse and keyboard
 
-    public const uint INPUT_MOUSE = 0;
+    public const uint INPUT_MOUSE = 0, INPUT_KEYBOARD = 1;
+    public const uint KEYEVENTF_KEYUP = 0x0002;
     public const uint MOUSEEVENTF_WHEEL = 0x0800;
     public const int VK_LSHIFT = 0xA0, VK_RSHIFT = 0xA1;
 
@@ -70,12 +71,26 @@ static class Native
         public IntPtr dwExtraInfo;
     }
 
-    // MOUSEINPUT is the largest member of the INPUT union, so this has the right size.
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KEYBDINPUT
+    {
+        public ushort wVk, wScan;
+        public uint dwFlags, time;
+        public IntPtr dwExtraInfo;
+    }
+
+    [StructLayout(LayoutKind.Explicit)]
+    public struct InputUnion
+    {
+        [FieldOffset(0)] public MOUSEINPUT mi;
+        [FieldOffset(0)] public KEYBDINPUT ki;
+    }
+
     [StructLayout(LayoutKind.Sequential)]
     public struct INPUT
     {
         public uint type;
-        public MOUSEINPUT mi;
+        public InputUnion u;
     }
 
     [DllImport("user32.dll", SetLastError = true)]

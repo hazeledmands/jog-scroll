@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <!-- Tests for the Windows version's settings, run with: dotnet test windows/Tests
-       They compile ../Config.cs on its own, so they run on any platform with the .NET 8 SDK or later.
+  <!-- Tests for the Windows version, run with: dotnet test windows/Tests
+       They compile only the files that don't need Windows Forms, so they run on any platform with the .NET 8 SDK or later.
        macos/tests/main.swift is the same for the macOS version; change both together. -->
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
@@ -13,6 +13,10 @@
 
   <ItemGroup>
     <Compile Include="..\Config.cs" Link="Config.cs" />
+    <Compile Include="..\Handlers.cs" Link="Handlers.cs" />
+    <Compile Include="..\Button.cs" Link="Button.cs" />
+    <Compile Include="..\Keys.cs" Link="Keys.cs" />
+    <Compile Include="..\Native.cs" Link="Native.cs" />
   </ItemGroup>
 
   <ItemGroup>

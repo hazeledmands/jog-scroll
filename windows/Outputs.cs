@@ -21,21 +21,24 @@ public sealed class Outputs
     readonly Func<Dictionary<string, ServerConfig>> servers;
     readonly Dictionary<string, (ServerConfig Config, IOutput Output)> made = new();
     public readonly ScrollOutput Scroll = new();
+    public readonly KeyOutput Keys;
     public readonly Lights Lights;
 
-    /// Called after each request with the server's name (or "scroll" or "lights") and null, or why it failed.
+    /// Called after each request with the server's name (or "scroll", "keys" or "lights") and null, or why it failed.
     public Action<string, string?>? OnResult;
 
     public Outputs(Func<Dictionary<string, ServerConfig>> servers, Func<string> outputPort)
     {
         this.servers = servers;
         Lights = new Lights(outputPort, error => OnResult?.Invoke("lights", error));
+        Keys = new KeyOutput((target, error) => OnResult?.Invoke(target, error));
     }
 
     /// For a jog wheel: it turned this many ticks, already sped up and inverted as the control says.
     public void Turn(MidiControl control, ControlAction action, double ticks)
     {
         if (action.IsScroll) Scroll.Turn(action, ticks);
+        else if (action.IsKeys) OnResult?.Invoke("keys", $"{control.Name}: only a button can press keys");
         else if (action.Type != null) OnResult?.Invoke(action.Type, $"{control.Name}: there's no action type called \"{action.Type}\"");
         else OnResult?.Invoke(action.Server ?? "", $"{control.Name}: a jog wheel can only scroll so far");
     }
@@ -46,6 +49,11 @@ public sealed class Outputs
         if (action.IsScroll)
         {
             OnResult?.Invoke("scroll", $"{control.Name}: only a jog wheel can scroll");
+            return;
+        }
+        if (action.IsKeys)
+        {
+            OnResult?.Invoke("keys", $"{control.Name}: only a button can press keys");
             return;
         }
         if (action.Type != null)
@@ -184,10 +192,13 @@ static class Scroller
         var input = new Native.INPUT
         {
             type = Native.INPUT_MOUSE,
-            mi = new Native.MOUSEINPUT
+            u = new Native.InputUnion
             {
-                mouseData = unchecked((uint)Math.Clamp(units, -10_000, 10_000)),
-                dwFlags = Native.MOUSEEVENTF_WHEEL,
+                mi = new Native.MOUSEINPUT
+                {
+                    mouseData = unchecked((uint)Math.Clamp(units, -10_000, 10_000)),
+                    dwFlags = Native.MOUSEEVENTF_WHEEL,
+                },
             },
         };
         Native.SendInput(1, new[] { input }, System.Runtime.InteropServices.Marshal.SizeOf<Native.INPUT>());
